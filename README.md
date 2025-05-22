@@ -121,3 +121,48 @@ bullscope/
 ## 라이센스
 
 이 프로젝트는 MIT 라이센스 하에 배포됩니다.
+
+## 에어플로우 환경설정 및 설치
+
+### 로컬
+
+가상환경 설정
+python3 -m venv airflow-venv
+source airflow-venv/bin/activate
+
+에어플로우 설치및 포스트그레스 드라이버 (메타데이터용, Local Executer)
+pip install "apache-airflow[postgres]"
+
+환경 변수 설정
+
+메타 데이터 디비 미그레이트 
+export AIRFLOW_HOME=~/airflow
+
+airflow db migrate
+
+airflow.cfg, airflow.db 파일 생성
+
+AIRFLOW__CORE__EXECUTOR=LocalExecutor
+AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:비밀번호@localhost:5432/
+
+옵션 수정. rm -rf airflow.db 제거후 다시 재 migrate. 
+
+
+
+
+## 의존성 설치
+
+포트리 설치
+curl -sSL https://install.python-poetry.org | python3 -
+
+포트리 명령어가 설치 안되는경우. 설치확인
+ls ~/.local/bin/poetry
+
+설치확인시, PATH 추가
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+poetry add numpy pandas    # 런타임 패키지 추가
+poetry add --dev pytest    # 개발 패키지 추가
+
+poetry install   # 모든 의존성 설치
