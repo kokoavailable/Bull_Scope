@@ -1,15 +1,15 @@
 from airflow import DAG
-from airflow.operators.python_operator import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
-from scripts.src.data_collector import DataCollector
+from src.data_collector import DataCollector
 
 def initial_full_update():
     """
-    주식 데이터를 매일 업데이트하는 함수
+    초기 주식 데이터를 업데이트하는 함수
     """
     collector = DataCollector()
     
-    result = collector.update_all_stocks_parallel(market="US", period="1y", delay=0.2)
+    result = collector.update_all_stocks_parallel(market="US", period="max", delay=0.2)
     collector.close()
     return result
 
@@ -24,7 +24,7 @@ with DAG(
     dag_id='initial_full_update',
     default_args=default_args,
     description='초기 주식 데이터를 업데이트하는 DAG',
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags = ['stock', 'initial'],
 ) as dag:
@@ -32,4 +32,5 @@ with DAG(
     init_task = PythonOperator(
         task_id='full_init',
         python_callable=initial_full_update,
+        execution_timeout=None,
     )

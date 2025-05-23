@@ -52,47 +52,11 @@ class DataCollector:
             cur.close()
             self._put_conn(conn)
 
-    def fetch_stock_symbols(self, market: str = "US", filter_options: dict = None):
+    def fetch_stock_symbols(self, market: str = "US"):
         if market.upper() == "US":
             url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
             df = pd.read_csv(url, sep="|")
             df = df.dropna(subset=['Symbol'])
-
-            if filter_options:
-                # ETF 제외 (가장 일반적인 필터)
-                if filter_options.get('exclude_etf', False):
-                    df = df[df['ETF'] != 'Y']
-                
-                # 테스트 이슈 제외
-                if filter_options.get('exclude_test_issues', True):
-                    df = df[df['Test Issue'] != 'Y']
-                
-                # 특수문자 포함된 심볼 제외 (워런트, 유닛 등)
-                if filter_options.get('exclude_special_symbols', True):
-                    df = df[~df['Symbol'].str.contains(r'[\.\-\+\=]', na=False)]
-                
-                # 금융상태가 정상인 것만 (Delisted 등 제외)
-                if filter_options.get('normal_financial_status_only', False):
-                    df = df[df['Financial Status'].isna() | (df['Financial Status'] == '')]
-                
-                # 특정 거래소만 선택
-                if 'exchanges' in filter_options:
-                    # N=NYSE, Q=NASDAQ, P=NYSE Arca, Z=BATS 등
-                    df = df[df['Listing Exchange'].isin(filter_options['exchanges'])]
-                
-                # 특정 마켓 카테고리만 (Q=NASDAQ Global Select, G=NASDAQ Global, S=NASDAQ Capital 등)
-                if 'market_categories' in filter_options:
-                    df = df[df['Market Category'].isin(filter_options['market_categories'])]
-                
-                # 특정 키워드가 포함된 회사명 제외 (SPAC, Acquisition 등)
-                if 'exclude_name_keywords' in filter_options:
-                    pattern = '|'.join(filter_options['exclude_name_keywords'])
-                    df = df[~df['Security Name'].str.contains(pattern, case=False, na=False)]
-                
-                # NextShares 제외
-                if filter_options.get('exclude_nextshares', False):
-                    df = df[df['NextShares'] != 'Y']
-            
             return df['Symbol'].tolist()
         else:
             raise NotImplementedError("Only US supported for now")

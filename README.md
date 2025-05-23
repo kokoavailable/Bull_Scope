@@ -133,6 +133,7 @@ source airflow-venv/bin/activate
 에어플로우 설치및 포스트그레스 드라이버 (메타데이터용, Local Executer)
 pip install "apache-airflow[postgres]"
 
+
 환경 변수 설정
 
 메타 데이터 디비 미그레이트 
@@ -142,11 +143,40 @@ airflow db migrate
 
 airflow.cfg, airflow.db 파일 생성
 
+load_examples = False
+default_task_execution_timeout = 7200
 AIRFLOW__CORE__EXECUTOR=LocalExecutor
 AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:비밀번호@localhost:5432/
 
+
 옵션 수정. rm -rf airflow.db 제거후 다시 재 migrate. 
 
+에어 플로우 스케줄러 및 api 서버 실행.
+
+pip install flask_appbuilder  
+
+airflow api-server -D
+airflow scheduler -D
+
+airflow dags reserialize
+
+-- stop 옵션은 디프리케이티드 됨.
+pkill -f airflow
+
+웹 ui 접속 http://localhost:8080/
+
+로그 찍기전에 워커 프로세스가 죽는 경우에는 로그 자체가 안찍히는 경우가 많음.
+파이썬 프롬프트로 정적 실행해보기.
+
+프롬프트 루트폴더에서
+
+You said:
+>>> from src.data_collector import DataCollector
+>>> collector = DataCollector()
+>>> result = collector.update_all_stocks_parallel(market="US", period="1d", delay=0.1) 
+>>> collector.close()
+
+수행 -> 디비 유저 계정 참조 오류 잡아냄.
 
 
 
