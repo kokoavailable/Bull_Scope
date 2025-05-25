@@ -13,9 +13,8 @@ import os
 # from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 app_env = os.getenv('APP_ENV', 'LOCAL')
-env_file = f".env.{app_env}"
-
-load_dotenv(env_file)
+env_path = Path(__file__).resolve().parent / f".env.{app_env}"
+load_dotenv(dotenv_path=env_path)
 
 rdb_user = os.environ.get("RDB_USER")
 rdb_password = os.environ.get("RDB_PASSWORD")
@@ -32,6 +31,7 @@ DB_PARAMS = {
     "port": rdb_port
 }
 
+logger.info(f"✅ Loaded DB_PARAMS: {DB_PARAMS}")
 
 ##### 로컬 환경일 때만 config.ini 읽기
 
@@ -70,11 +70,19 @@ def setup_logging():
     # 로그 디렉토리 생성
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
+    # 콘솔 핸들러 추가 (중요!)
+    logger.add(
+        sink=lambda msg: print(msg, end=""),  # 콘솔 출력
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        level=log_level.upper(),
+        colorize=True
+    )
+
     # 파일 핸들러 추가
     logger.add(
         sink=log_file_path,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        level="INFO",
+        level="DEBUG",  # 로그 레벨 설정
         rotation="1 day",  # 하루마다 로그 파일 회전
         retention="30 days",  # 30일간 로그 파일 보관
         compression="zip",  # 압축 저장

@@ -130,6 +130,9 @@ bullscope/
 python3 -m venv airflow-venv
 source airflow-venv/bin/activate
 
+가상환경의 activate 스크립트 수정
+echo 'export AIRFLOW_HOME=/Users/koko/bull_Scope/airflow' >> ~/venvs/bull_scope/bin/activate
+
 에어플로우 설치및 포스트그레스 드라이버 (메타데이터용, Local Executer)
 pip install "apache-airflow[postgres]"
 
@@ -153,10 +156,12 @@ AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:비밀번호@loca
 
 에어 플로우 스케줄러 및 api 서버 실행.
 
-pip install flask_appbuilder  
+pip install flask_appbuilder 
 
 airflow api-server -D
 airflow scheduler -D
+airflow triggerer -D
+airflow dag-processor -D
 
 airflow dags reserialize
 
