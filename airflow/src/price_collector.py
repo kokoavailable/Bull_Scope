@@ -8,26 +8,26 @@ from helper.common import logger, DB_PARAMS
 import concurrent.futures
 import time
 
-class DataCollector:
+class PriceCollector:
 
     # 클래스 레벨 풀
 
     connection_pool = None
 
     def __init__(self, minconn=4, maxconn=16):
-        if DataCollector.connection_pool is None:
-            DataCollector.connection_pool = ThreadedConnectionPool(
+        if PriceCollector.connection_pool is None:
+            PriceCollector.connection_pool = ThreadedConnectionPool(
                 minconn, maxconn, **DB_PARAMS
             )
         self._ensure_tables()
 
     def _get_conn(self):
         # 풀에서 커넥션 할당
-        return DataCollector.connection_pool.getconn()
+        return PriceCollector.connection_pool.getconn()
     
     def _put_conn(self, conn):
         # 커넥션 반환
-        DataCollector.connection_pool.putconn(conn)
+        PriceCollector.connection_pool.putconn(conn)
 
     def _ensure_tables(self):
         conn = self._get_conn()
@@ -35,6 +35,8 @@ class DataCollector:
         try:
             cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_price (
+                id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                st
                 symbol VARCHAR(16) NOT NULL,
                 date DATE NOT NULL,
                 open NUMERIC,
@@ -43,7 +45,7 @@ class DataCollector:
                 close NUMERIC,
                 adj_close NUMERIC,
                 volume BIGINT,
-                PRIMARY KEY(symbol, date)
+                UNIQUE (symbol, date)
             );
             """)
             conn.commit()
@@ -131,11 +133,11 @@ class DataCollector:
         return results
 
     def close(self):
-        if DataCollector.connection_pool:
-            DataCollector.connection_pool.closeall()
+        if PriceCollector.connection_pool:
+            PriceCollector.connection_pool.closeall()
 
 if __name__ == "__main__":
-    collector = DataCollector()
+    collector = PriceCollector()
     result = collector.update_all_stocks_parallel(market="US", period="1y", delay=0.2)
     # 결과 출력
     for symbol, success in result.items():

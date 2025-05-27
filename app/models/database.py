@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, DateTime, Boolean, ForeignKey, Table
+from sqlalchemy import create_engine, Column, Integer, String, Float, Date, DateTime, Boolean, ForeignKey, Table, BigInteger, Identity
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -27,7 +27,7 @@ def get_db():
 class Stock(Base):
     __tablename__ = "stocks"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
     symbol = Column(String, unique=True, index=True)
     company_name = Column(String)
     sector = Column(String, nullable=True)
@@ -44,8 +44,8 @@ class Stock(Base):
 class StockPrice(Base):
     __tablename__ = "stock_prices"
 
-    id = Column(Integer, primary_key=True, index=True)
-    stock_id = Column(Integer, ForeignKey("stocks.id"))
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    stock_id = Column(BigInteger, ForeignKey("stocks.id"))
     date = Column(Date, index=True)
     open = Column(Float)
     high = Column(Float)
@@ -61,8 +61,8 @@ class StockPrice(Base):
 class StockFundamental(Base):
     __tablename__ = "stock_fundamentals"
 
-    id = Column(Integer, primary_key=True, index=True)
-    stock_id = Column(Integer, ForeignKey("stocks.id"))
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    stock_id = Column(BigInteger, ForeignKey("stocks.id"))
     date = Column(Date, index=True)
     market_cap = Column(Float, nullable=True)
     pe_ratio = Column(Float, nullable=True)
@@ -83,8 +83,8 @@ class StockFundamental(Base):
 class StockTechnical(Base):
     __tablename__ = "stock_technicals"
 
-    id = Column(Integer, primary_key=True, index=True)
-    stock_id = Column(Integer, ForeignKey("stocks.id"))
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    stock_id = Column(BigInteger, ForeignKey("stocks.id"))
     date = Column(Date, index=True)
     rsi_14 = Column(Float, nullable=True)          # RSI(14)
     macd = Column(Float, nullable=True)            # MACD 라인
@@ -105,9 +105,9 @@ class StockTechnical(Base):
 # 저항선/지지선 정보 모델
 class SupportResistance(Base):
     __tablename__ = "support_resistance"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    stock_id = Column(Integer, ForeignKey("stocks.id"))
+
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    stock_id = Column(BigInteger, ForeignKey("stocks.id"))
     date = Column(Date, index=True)
     price_level = Column(Float, nullable=False)     # 가격 수준
     is_support = Column(Boolean, default=True)      # 지지선 여부 (False면 저항선)
@@ -119,8 +119,8 @@ class SupportResistance(Base):
 # 시장 지표 모델
 class MarketIndicator(Base):
     __tablename__ = "market_indicators"
-    
-    id = Column(Integer, primary_key=True, index=True)
+
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
     date = Column(Date, index=True, unique=True)
     vix = Column(Float, nullable=True)                  # VIX 지수
     fear_greed_index = Column(Integer, nullable=True)   # 공포/탐욕 지수 (0-100)

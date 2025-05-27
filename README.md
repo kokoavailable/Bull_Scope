@@ -158,10 +158,7 @@ AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:비밀번호@loca
 
 pip install flask_appbuilder 
 
-airflow api-server -D
-airflow scheduler -D
-airflow triggerer -D
-airflow dag-processor -D
+nohup airflow standalone > airflow.log 2>&1 &       
 
 airflow dags reserialize
 
