@@ -4,30 +4,19 @@ import psycopg2
 from psycopg2.extras import execute_values
 from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime, timedelta
-from helper.common import logger, DB_PARAMS
-import concurrent.futures
+from helper.common import logger, fetch_stock_symbols, YF_SESSION
 import time
+from typing import Dict
+from src.base_collector import BaseCollector
 
-class PriceCollector:
+class PriceCollector(BaseCollector):
 
     # 클래스 레벨 풀
 
     connection_pool = None
 
-    def __init__(self, minconn=4, maxconn=16):
-        if PriceCollector.connection_pool is None:
-            PriceCollector.connection_pool = ThreadedConnectionPool(
-                minconn, maxconn, **DB_PARAMS
-            )
+    def __init__(self):
         self._ensure_tables()
-
-    def _get_conn(self):
-        # 풀에서 커넥션 할당
-        return PriceCollector.connection_pool.getconn()
-    
-    def _put_conn(self, conn):
-        # 커넥션 반환
-        PriceCollector.connection_pool.putconn(conn)
 
     def _ensure_tables(self):
         conn = self._get_conn()
@@ -36,7 +25,6 @@ class PriceCollector:
             cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_price (
                 id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                st
                 symbol VARCHAR(16) NOT NULL,
                 date DATE NOT NULL,
                 open NUMERIC,
@@ -45,6 +33,8 @@ class PriceCollector:
                 close NUMERIC,
                 adj_close NUMERIC,
                 volume BIGINT,
+                created_at TIMESTAMPTZ DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                updated_at TIMESTAMPTZ DEFAULT (NOW() AT TIME ZONE 'UTC'),
                 UNIQUE (symbol, date)
             );
             """)
@@ -56,26 +46,39 @@ class PriceCollector:
 
     def fetch_stock_symbols(self, market: str = "US"):
         if market.upper() == "US":
-            url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
-            df = pd.read_csv(url, sep="|")
-            df = df.dropna(subset=['Symbol'])
-            return df['Symbol'].tolist()
-        else:
+            return fetch_stock_symbols
             raise NotImplementedError("Only US supported for now")
 
-    def fetch_stock_data(self, symbol: str, period: str = "1y"):
-        try:
-            df = yf.Ticker(symbol).history(period=period)
-            if df.empty:
-                logger.warning(f"{symbol}에 대한 데이터가 없습니다.")
-                return pd.DataFrame()
-            df.reset_index(inplace=True)
-            return df
-        except Exception as e:
-            logger.error(f"{symbol} 데이터 가져오기 실패: {str(e)}")
-            return pd.DataFrame()
+    # ───────── 멀티-티커 가격 수집
+    @staticmethod
+    def fetch_prices_batch(symbols: List[str],
+                           period="1y",
+                           interval="1d") -> Dict[str, pd.DataFrame]:
+        joined = " ".join(symbols)
+        df = yf.download(
+            tickers     = joined,
+            period      = period,
+            interval    = interval,
+            group_by    = "ticker",
+            auto_adjust = False,
+            threads     = True,
+            progress    = False
+        )
 
-    def save_price_data_bulk(self, df: pd.DataFrame, symbol: str):
+        out: Dict[str, pd.DataFrame] = {}
+        for sym in symbols:
+            # (sym, 'Open') 같은 멀티인덱스 존재 여부로 데이터 판단
+            if (sym, "Open") not in df.columns:   # 데이터 없음
+                continue
+            sub = df[sym].dropna(how="all")
+            if sub.empty:
+                continue
+            sub.reset_index(inplace=True)         # Date → 컬럼
+            out[sym] = sub
+        return out
+
+
+    def _save_bulk(self, df: pd.DataFrame, symbol: str):
         if df.empty:
             return False
         conn = self._get_conn()
@@ -84,19 +87,23 @@ class PriceCollector:
             df["symbol"] = symbol
             df["date"] = pd.to_datetime(df["Date"]).dt.date
             df["adj_close"] = df.get("Adj Close", df["Close"])
-            records = df[["symbol", "date", "Open", "High", "Low", "Close", "adj_close", "Volume"]].to_records(index=False)
+            records = df[[
+                "symbol", "date", "Open", "High", "Low", 
+                "Close", "adj_close", "Volume"
+            ]].to_records(index=False)
 
             # UPSERT INTO with ON CONFLICT
             sql = """
-                INSERT INTO stock_price (symbol, date, open, high, low, close, adj_close, volume)
-                VALUES %s
-                ON CONFLICT (symbol, date) DO UPDATE SET
-                    open=EXCLUDED.open,
-                    high=EXCLUDED.high,
-                    low=EXCLUDED.low,
-                    close=EXCLUDED.close,
-                    adj_close=EXCLUDED.adj_close,
-                    volume=EXCLUDED.volume;
+            INSERT INTO stock_price (
+                symbol, date, open, high, low, close, adj_close, volume
+            ) VALUES %s
+            ON CONFLICT (symbol, date) DO UPDATE SET
+                open        = EXCLUDED.open,
+                high        = EXCLUDED.high,
+                low         = EXCLUDED.low,
+                close       = EXCLUDED.close,
+                adj_close   = EXCLUDED.adj_close,
+                volume      = EXCLUDED.volume;
             """
             execute_values(cur, sql, records)
             conn.commit()
@@ -109,41 +116,45 @@ class PriceCollector:
             cur.close()
             self._put_conn(conn)
 
-    def fetch_and_save(self, symbol: str, period: str = "1y", delay: float = 0.2):
-        try:
-            df = self.fetch_stock_data(symbol, period)
-            success = self.save_price_data_bulk(df, symbol)
-            time.sleep(delay)
-            return symbol, success
-        except Exception as e:
-            logger.error(f"{symbol} 처리 중 에러: {e}")
-            return symbol, False
-
-    def update_all_stocks_parallel(self, market="US", period="1y", delay=0.2, max_workers=8):
-        symbols = self.fetch_stock_symbols(market)
+    # ───────── 전체 업데이트 (배치 루프)
+    def update_all(self,
+                   period="1y",
+                   interval="1d",
+                   batch_size=100,
+                   pause=1.0):
+        symbols = self.fetch_stock_symbols()
         results = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_symbol = {
-                executor.submit(self.fetch_and_save, symbol, period, delay): symbol
-                for symbol in symbols
-            }
-            for future in concurrent.futures.as_completed(future_to_symbol):
-                symbol, success = future.result()
-                results[symbol] = success
+
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i+batch_size]
+            price_map = self.fetch_prices_batch(batch, period, interval)
+            # 정상 수집 종목
+            for sym, df in price_map.items():
+                results[sym] = self._save_bulk(df, sym)
+
+            # 수집 실패 종목
+            fail_syms = set(batch) - set(price_map.keys())
+            for sym in fail_syms:
+                logger.warning(f"{sym} 데이터 없음 (야후 응답 누락)")
+                results[sym] = False
+
+            time.sleep(pause)   # polite pause between batches
+
         return results
+
 
     def close(self):
         if PriceCollector.connection_pool:
             PriceCollector.connection_pool.closeall()
 
-if __name__ == "__main__":
-    collector = PriceCollector()
-    result = collector.update_all_stocks_parallel(market="US", period="1y", delay=0.2)
-    # 결과 출력
-    for symbol, success in result.items():
-        if success:
-            logger.info(f"{symbol} 데이터 업데이트 성공")
-        else:
-            logger.error(f"{symbol} 데이터 업데이트 실패")
+# if __name__ == "__main__":
+#     collector = PriceCollector()
+#     result = collector.update_all_stocks_parallel(market="US", period="1y", delay=0.2)
+#     # 결과 출력
+#     for symbol, success in result.items():
+#         if success:
+#             logger.info(f"{symbol} 데이터 업데이트 성공")
+#         else:
+#             logger.error(f"{symbol} 데이터 업데이트 실패")
 
-    collector.close()
+#     collector.close()

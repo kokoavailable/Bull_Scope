@@ -4,24 +4,14 @@ import yfinance as yf
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime, date
-from helper.common import logger, DB_PARAMS
+from helper.common import logger, YF_SESSION
+from src.base_collector import BaseCollector
 
-
-class MarketCollector:
+class MarketCollector(BaseCollector):
     connection_pool = None
 
-    def __init__(self, minconn=2, maxconn=8):
-        if MarketCollector.connection_pool is None:
-            MarketCollector.connection_pool = ThreadedConnectionPool(
-                minconn, maxconn, **DB_PARAMS
-            )
+    def __init__(self):
         self._ensure_table()
-
-    def _get_conn(self):
-        return MarketCollector.connection_pool.getconn()
-
-    def _put_conn(self, conn):
-        MarketCollector.connection_pool.putconn(conn)
 
     def _ensure_table(self):
         conn = self._get_conn()

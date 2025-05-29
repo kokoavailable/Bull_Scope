@@ -4,25 +4,17 @@ import psycopg2
 from psycopg2.extras import execute_values
 from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime
-from helper.common import logger, DB_PARAMS
+from helper.common import logger, DB_PARAMS, YF_SESSION
 import concurrent.futures
-import time
+from typing import List, Dict
+import requests
+from src.base_collector import BaseCollector
 
-class StockCollector:
+class StockCollector(BaseCollector):
     connection_pool = None
 
-    def __init__(self, minconn=2, maxconn=8):
-        if StockCollector.connection_pool is None:
-            StockCollector.connection_pool = ThreadedConnectionPool(
-                minconn, maxconn, **DB_PARAMS
-            )
+    def __init__(self):
         self._ensure_table()
-
-    def _get_conn(self):
-        return StockCollector.connection_pool.getconn()
-
-    def _put_conn(self, conn):
-        StockCollector.connection_pool.putconn(conn)
 
     def _ensure_table(self):
         conn = self._get_conn()
@@ -59,7 +51,7 @@ class StockCollector:
         symbol = row['symbol']
         company_name = row['company_name']
         try:
-            info = yf.Ticker(symbol).info
+            info = yf.Ticker(symbol, session =self.SESSION).info
             return {
                 'symbol': symbol,
                 'company_name': company_name,
@@ -75,7 +67,7 @@ class StockCollector:
     def fetch_and_enrich_all(self, df: pd.DataFrame, max_workers=8):
         records = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(self.enrich_metadata, row) for _, row in df.iterrows()]
+            futures = [executor.submit(self.enrich_metadata, row) for row in df.itertuples(index=False)]
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
                 if result:
