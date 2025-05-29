@@ -7,6 +7,12 @@ from loguru import logger
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import pandas as pd
+import requests
+
+from functools import lru_cache
+
+from typing import List
 
 # from sqlalchemy import create_engine
 # from sqlalchemy.orm import sessionmaker
@@ -32,6 +38,14 @@ DB_PARAMS = {
     "port": rdb_port
 }
 
+URL_NASDAQ_LISTING = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
+
+@lru_cache  # 한 번만 내려받아 메모리에 캐싱
+def fetch_stock_symbols() -> list[str]:
+    df = pd.read_csv(URL_NASDAQ_LISTING, sep="|")
+    return df.loc[df["Symbol"].notna(), "Symbol"].tolist()
+
+YF_SESSION = requests.Session()
 
 ##### 로컬 환경일 때만 config.ini 읽기
 
@@ -50,8 +64,12 @@ DB_PARAMS = {
 
 ###### 로거
 
-
-
+# ──────────────────────────────────────────────
+# 헬퍼: 리스트 → 고정 크기 배치
+# ──────────────────────────────────────────────
+def chunked(seq: List[str], n: int = 100):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
 
 def setup_logging():
     """

@@ -3,25 +3,16 @@ import psycopg2
 from psycopg2.extras import execute_values
 from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime
-from helper.common import logger, DB_PARAMS
+from helper.common import logger, DB_PARAMS, YF_SESSION
 import concurrent.futures
 import talib
+from src.base_collector import BaseCollector
 
-class TechnicalCollector:
+class TechnicalCollector(BaseCollector):
     connection_pool = None
 
-    def __init__(self, minconn=2, maxconn=8):
-        if TechnicalCollector.connection_pool is None:
-            TechnicalCollector.connection_pool = ThreadedConnectionPool(
-                minconn, maxconn, **DB_PARAMS
-            )
+    def __init__(self):
         self._ensure_table()
-
-    def _get_conn(self):
-        return TechnicalCollector.connection_pool.getconn()
-
-    def _put_conn(self, conn):
-        TechnicalCollector.connection_pool.putconn(conn)
 
     def _ensure_table(self):
         conn = self._get_conn()

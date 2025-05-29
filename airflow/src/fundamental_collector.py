@@ -3,35 +3,26 @@ import yfinance as yf
 import pandas as pd
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
+import threading
 from psycopg2.extras import execute_values
 from datetime import datetime, timedelta, date
-from helper.common import logger, DB_PARAMS
+from helper.common import logger, fetch_stock_symbols, YF_SESSION
 import concurrent.futures
 import time
+from src.base_collector import BaseCollector
 
-class FundamentalCollector:
+class FundamentalCollector(BaseCollector):
+    
     """
     • 심볼 목록 → yfinance .info 에서 핵심 지표만 추출
     • stock_fundamentals 테이블 (symbol, date) 단위로 UPSERT
     """
-
-    connection_pool = None
-
     # ──────────────────────────────────────────────
     # 초기화 & 테이블 보장
     # ──────────────────────────────────────────────
-    def __init__(self, minconn=4, maxconn=16):
-        if FundamentalCollector.connection_pool is None:
-            FundamentalCollector.connection_pool = ThreadedConnectionPool(
-                minconn, maxconn, **DB_PARAMS
-            )
+    def __init__(self):
         self._ensure_table()
 
-    def _get_conn(self):
-        return FundamentalCollector.connection_pool.getconn()
-
-    def _put_conn(self, conn):
-        FundamentalCollector.connection_pool.putconn(conn)
 
     def _ensure_table(self):
         conn = self._get_conn()
@@ -69,9 +60,8 @@ class FundamentalCollector:
     def fetch_stock_symbols(self, market: str = "US"):
         if market.upper() != "US":
             raise NotImplementedError("Only US supported")
-        url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
-        df = pd.read_csv(url, sep="|")
-        return df.loc[df["Symbol"].notna(), "Symbol"].tolist()
+
+        return fetch_stock_symbols()
 
     # ──────────────────────────────────────────────
     # 2) yfinance → fundamentals dict
@@ -92,13 +82,23 @@ class FundamentalCollector:
 
     def fetch_fundamental_data(self, symbol: str):
         try:
-            info = yf.Ticker(symbol).info
+            info = yf.Ticker(symbol, session=YF_SESSION).info
             if not info:
                 logger.warning(f"[{symbol}] fundamentals 없음")
                 return None
             data = {k: info.get(src) for k, src in self._MAP.items()}
             data["symbol"] = symbol
             data["date"] = date.today()     # 일(UTC) 단위 스냅샷
+
+            for k in list(self._MAP):           # market_cap, pe_ratio, ...
+                val = data.get(k)
+                # 문자열 → 숫자 / 변환 실패 시 NaN
+                val = pd.to_numeric(val, errors="coerce")
+                # NaN → None  (psycopg2 가 NULL 로 보냄)
+                if pd.isna(val):
+                    val = None
+                data[k] = float(val) if val is not None else None
+
             return data
         except Exception as e:
             logger.error(f"[{symbol}] fundamentals 가져오기 실패: {e}")
@@ -169,14 +169,6 @@ class FundamentalCollector:
                 results[sym] = ok
         return results
 
-    # ──────────────────────────────────────────────
-    # 6) 종료
-    # ──────────────────────────────────────────────
-    def close(self):
-        if FundamentalCollector.connection_pool:
-            FundamentalCollector.connection_pool.closeall()
-
-
 # ──────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────
@@ -190,4 +182,4 @@ if __name__ == "__main__":
         else:
             logger.error(f"{sym} fundamentals 업데이트 실패")
 
-    collector.close()
+    collector.close_pool()
