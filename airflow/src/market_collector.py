@@ -11,25 +11,7 @@ class MarketCollector(BaseCollector):
     connection_pool = None
 
     def __init__(self):
-        self._ensure_table()
-
-    def _ensure_table(self):
-        conn = self._get_conn()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS market_indicators (
-                    id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    date DATE UNIQUE NOT NULL,
-                    vix FLOAT,
-                    fear_greed_index INTEGER,
-                    market_trend TEXT
-                );
-            """)
-            conn.commit()
-        finally:
-            cur.close()
-            self._put_conn(conn)
+        super().__init__()
 
     def fetch_vix(self) -> float | None:
         try:
@@ -101,10 +83,9 @@ class MarketCollector(BaseCollector):
         fear = self.fetch_fear_greed()
         trend = self.infer_market_trend(vix, fear)
         return self.save_market_indicator(vix, fear, trend)
-
+    
     def close(self):
-        if MarketCollector.connection_pool:
-            MarketCollector.connection_pool.closeall()
+        super().close()
 
 
 if __name__ == "__main__":

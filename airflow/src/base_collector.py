@@ -13,7 +13,6 @@ class BaseCollector:
                 self.__class__.connection_pool = ThreadedConnectionPool(
                     minconn, maxconn, **DB_PARAMS
                 )
-        self._ensure_table()
 
     def _get_conn(self):
         return self.__class__.connection_pool.getconn()

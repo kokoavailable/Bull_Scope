@@ -1,0 +1,21 @@
+## 깃 리베이스 과정
+
+git rebase -i --rebase-merges HEAD~2
+
+
+label onto
+# Branch main
+reset onto
+pick 64e7e89 Update README.md
+pick 4999577 Delete README.md
+label main
+reset onto
+reword 3182968 no message    # ← 수정할 커밋 reword로 변경!
+merge -C 7466496 main # Merge branch 'main' ...
+
+no message
+# Please enter the commit message for your changes.
+...
+
+머지 오류 발생시 머지 완료후 
+git rebase --continue

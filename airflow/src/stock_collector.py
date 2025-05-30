@@ -11,30 +11,8 @@ import requests
 from src.base_collector import BaseCollector
 
 class StockCollector(BaseCollector):
-    connection_pool = None
-
     def __init__(self):
-        self._ensure_table()
-
-    def _ensure_table(self):
-        conn = self._get_conn()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS stocks (
-                    id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    symbol VARCHAR(16) UNIQUE NOT NULL,
-                    company_name TEXT,
-                    sector TEXT,
-                    industry TEXT,
-                    country TEXT,
-                    last_updated TIMESTAMP DEFAULT NOW()
-                );
-            """)
-            conn.commit()
-        finally:
-            cur.close()
-            self._put_conn(conn)
+        super().__init__()
 
     def fetch_stock_symbols(self):
         url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
@@ -51,7 +29,7 @@ class StockCollector(BaseCollector):
         symbol = row['symbol']
         company_name = row['company_name']
         try:
-            info = yf.Ticker(symbol, session =self.SESSION).info
+            info = yf.Ticker(symbol, session=YF_SESSION).info
             return {
                 'symbol': symbol,
                 'company_name': company_name,
@@ -128,8 +106,7 @@ class StockCollector(BaseCollector):
             return False
 
     def close(self):
-        if StockCollector.connection_pool:
-            StockCollector.connection_pool.closeall()
+        super().close()
 
 
 if __name__ == "__main__":

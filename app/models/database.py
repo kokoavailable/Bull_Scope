@@ -97,7 +97,8 @@ class StockTechnical(Base):
     bolinger_middle = Column(Float, nullable=True) # 볼린저 밴드 중간
     bolinger_lower = Column(Float, nullable=True)  # 볼린저 밴드 하단
     ppo = Column(Float, nullable=True)             # PPO (Percentage Price Oscillator)
-    golden_cross = Column(Boolean, default=False)  # MACD 골든 크로스 여부
+    ma_golden_cross = Column(Boolean, default=False)  # ma 골든 크로스 여부
+    macd_golden_cross = Column(Boolean, default=False)  # MACD 골든 크로스 여부
     
     # 관계 설정
     stock = relationship("Stock", back_populates="technicals")

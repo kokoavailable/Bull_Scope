@@ -6,48 +6,17 @@ from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime, timedelta
 from helper.common import logger, fetch_stock_symbols, YF_SESSION
 import time
-from typing import Dict
+from typing import Dict, List
 from src.base_collector import BaseCollector
 
 class PriceCollector(BaseCollector):
-
-    # 클래스 레벨 풀
-
-    connection_pool = None
-
     def __init__(self):
-        self._ensure_tables()
-
-    def _ensure_tables(self):
-        conn = self._get_conn()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS stock_price (
-                id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                symbol VARCHAR(16) NOT NULL,
-                date DATE NOT NULL,
-                open NUMERIC,
-                high NUMERIC,
-                low NUMERIC,
-                close NUMERIC,
-                adj_close NUMERIC,
-                volume BIGINT,
-                created_at TIMESTAMPTZ DEFAULT (NOW() AT TIME ZONE 'UTC'),
-                updated_at TIMESTAMPTZ DEFAULT (NOW() AT TIME ZONE 'UTC'),
-                UNIQUE (symbol, date)
-            );
-            """)
-            conn.commit()
-            
-        finally:
-            cur.close()
-            self._put_conn(conn)
+        super().__init__()
 
     def fetch_stock_symbols(self, market: str = "US"):
         if market.upper() == "US":
-            return fetch_stock_symbols
-            raise NotImplementedError("Only US supported for now")
+            return fetch_stock_symbols()
+        raise NotImplementedError("Only US supported for now")
 
     # ───────── 멀티-티커 가격 수집
     @staticmethod
@@ -62,7 +31,8 @@ class PriceCollector(BaseCollector):
             group_by    = "ticker",
             auto_adjust = False,
             threads     = True,
-            progress    = False
+            progress    = False,
+            session     = YF_SESSION
         )
 
         out: Dict[str, pd.DataFrame] = {}
@@ -84,20 +54,29 @@ class PriceCollector(BaseCollector):
         conn = self._get_conn()
         cur = conn.cursor()
         try:
-            df["symbol"] = symbol
+            # 1) symbol → stock_id
+            cur.execute("SELECT id FROM stocks WHERE symbol = %s;", (symbol,))
+            row = cur.fetchone()
+            if not row:
+                logger.warning(f"{symbol} stock_id 없음")
+                return False
+            stock_id = row[0]
+
+            df["stock_id"] = stock_id
             df["date"] = pd.to_datetime(df["Date"]).dt.date
             df["adj_close"] = df.get("Adj Close", df["Close"])
+            
             records = df[[
-                "symbol", "date", "Open", "High", "Low", 
+                "stock_id", "date", "Open", "High", "Low", 
                 "Close", "adj_close", "Volume"
             ]].to_records(index=False)
 
             # UPSERT INTO with ON CONFLICT
             sql = """
-            INSERT INTO stock_price (
-                symbol, date, open, high, low, close, adj_close, volume
+            INSERT INTO stock_prices (
+                stock_id, date, open, high, low, close, adj_close, volume
             ) VALUES %s
-            ON CONFLICT (symbol, date) DO UPDATE SET
+            ON CONFLICT (stock_id, date) DO UPDATE SET
                 open        = EXCLUDED.open,
                 high        = EXCLUDED.high,
                 low         = EXCLUDED.low,
@@ -108,10 +87,12 @@ class PriceCollector(BaseCollector):
             execute_values(cur, sql, records)
             conn.commit()
             return True
+        
         except Exception as e:
             conn.rollback()
             logger.error(f"{symbol} 데이터 저장 실패: {str(e)}")
             return False
+        
         finally:
             cur.close()
             self._put_conn(conn)
@@ -144,8 +125,7 @@ class PriceCollector(BaseCollector):
 
 
     def close(self):
-        if PriceCollector.connection_pool:
-            PriceCollector.connection_pool.closeall()
+        super().close()
 
 # if __name__ == "__main__":
 #     collector = PriceCollector()

@@ -21,38 +21,7 @@ class FundamentalCollector(BaseCollector):
     # 초기화 & 테이블 보장
     # ──────────────────────────────────────────────
     def __init__(self):
-        self._ensure_table()
-
-
-    def _ensure_table(self):
-        conn = self._get_conn()
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS stock_fundamentals (
-                    id              BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    symbol          VARCHAR(16) NOT NULL,
-                    date            DATE        NOT NULL,
-                    market_cap      NUMERIC,
-                    pe_ratio        NUMERIC,
-                    pb_ratio        NUMERIC,
-                    debt_to_equity  NUMERIC,
-                    current_ratio   NUMERIC,
-                    quick_ratio     NUMERIC,
-                    roe             NUMERIC,
-                    roa             NUMERIC,
-                    eps             NUMERIC,
-                    revenue         NUMERIC,
-                    net_income      NUMERIC,
-                    UNIQUE (symbol, date)
-                );
-                """
-            )
-            conn.commit()
-        finally:
-            cur.close()
-            self._put_conn(conn)
+        super().__init__()
 
     # ──────────────────────────────────────────────
     # 1) 심볼 목록 가져오기

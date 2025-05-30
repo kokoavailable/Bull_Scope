@@ -12,36 +12,7 @@ class TechnicalCollector(BaseCollector):
     connection_pool = None
 
     def __init__(self):
-        self._ensure_table()
-
-    def _ensure_table(self):
-        conn = self._get_conn()
-        cur = conn.cursor()
-        try:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS stock_technicals (
-                    id BIGSERIAL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    stock_id BIGINT NOT NULL REFERENCES stocks(id),
-                    date DATE NOT NULL,
-                    rsi_14 FLOAT,
-                    macd FLOAT,
-                    macd_signal FLOAT,
-                    macd_histogram FLOAT,
-                    ma_20 FLOAT,
-                    ma_50 FLOAT,
-                    ma_200 FLOAT,
-                    bolinger_upper FLOAT,
-                    bolinger_middle FLOAT,
-                    bolinger_lower FLOAT,
-                    ppo FLOAT,
-                    golden_cross BOOLEAN DEFAULT FALSE,
-                    UNIQUE (stock_id, date)
-                );
-            """)
-            conn.commit()
-        finally:
-            cur.close()
-            self._put_conn(conn)
+        super().__init__()
 
     def _get_price_data(self, symbol: str):
         conn = self._get_conn()
@@ -49,8 +20,8 @@ class TechnicalCollector(BaseCollector):
         try:
             cur.execute("""
                 SELECT s.id, p.date, p.close, p.volume
-                FROM stock_price p
-                JOIN stocks s ON s.symbol = p.symbol
+                FROM stock_prices p
+                JOIN stocks s ON s.id = p.stock_id
                 WHERE s.symbol = %s
                 ORDER BY p.date;
             """, (symbol,))
@@ -75,7 +46,8 @@ class TechnicalCollector(BaseCollector):
         upper, middle, lower = talib.BBANDS(close)
         ppo = talib.PPO(close)
 
-        golden_cross = (ma_50 > ma_200) & (ma_50.shift(1) <= ma_200.shift(1))
+        ma_golden_cross = (ma_50 > ma_200) & (ma_50.shift(1) <= ma_200.shift(1))
+        macd_golden_cross = (macd > macd_signal) & (macd.shift(1) <= macd_signal.shift(1))
 
         return pd.DataFrame({
             "date": index,
@@ -90,7 +62,8 @@ class TechnicalCollector(BaseCollector):
             "bolinger_middle": middle,
             "bolinger_lower": lower,
             "ppo": ppo,
-            "golden_cross": golden_cross.fillna(False)
+            "ma_golden_cross": ma_golden_cross.fillna(False),
+            "macd_golden_cross": macd_golden_cross.fillna(False)
         }).dropna(subset=["macd"])
 
     def save_technicals_bulk(self, df: pd.DataFrame, stock_id: int):
@@ -106,7 +79,7 @@ class TechnicalCollector(BaseCollector):
                 "stock_id", "date", "rsi_14", "macd", "macd_signal", "macd_histogram",
                 "ma_20", "ma_50", "ma_200",
                 "bolinger_upper", "bolinger_middle", "bolinger_lower",
-                "ppo", "golden_cross"
+                "ppo", "ma_golden_cross", "macd_golden_cross"
             ]].to_records(index=False)
 
             sql = """
@@ -114,7 +87,7 @@ class TechnicalCollector(BaseCollector):
                     stock_id, date, rsi_14, macd, macd_signal, macd_histogram,
                     ma_20, ma_50, ma_200,
                     bolinger_upper, bolinger_middle, bolinger_lower,
-                    ppo, golden_cross
+                    ppo, ma_golden_cross, macd_golden_cross
                 )
                 VALUES %s
                 ON CONFLICT (stock_id, date) DO UPDATE SET
@@ -129,7 +102,8 @@ class TechnicalCollector(BaseCollector):
                     bolinger_middle = EXCLUDED.bolinger_middle,
                     bolinger_lower = EXCLUDED.bolinger_lower,
                     ppo = EXCLUDED.ppo,
-                    golden_cross = EXCLUDED.golden_cross;
+                    ma_golden_cross = EXCLUDED.ma_golden_cross,
+                    macd_golden_cross = EXCLUDED.macd_golden_cross;
             """
             execute_values(cur, sql, records)
             conn.commit()
@@ -168,8 +142,7 @@ class TechnicalCollector(BaseCollector):
         return results
 
     def close(self):
-        if TechnicalCollector.connection_pool:
-            TechnicalCollector.connection_pool.closeall()
+        super().close()
 
 
 if __name__ == "__main__":
