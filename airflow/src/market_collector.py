@@ -3,15 +3,46 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
-from datetime import datetime, date
-from helper.common import logger, YF_SESSION
+from datetime import datetime, date, timezone
+from helper.common import logger, driver
 from src.base_collector import BaseCollector
+from typing import Optional
+from requests_html import HTMLSession
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By   
+from selenium.webdriver.support import expected_conditions as EC
 
 class MarketCollector(BaseCollector):
-    connection_pool = None
-
     def __init__(self):
         super().__init__()
+        self.vix = self.fetch_vix()
+        self.fear = self.fetch_fear_greed()
+        self.indicator_values = {
+            "vix": self.vix,
+            "fear_greed_index": self.fear,
+        }
+        self._load_indicator_type_ids()
+
+    def _load_indicator_type_ids(self):
+        """indicator_types에서 코드→ID 매핑을 불러와 self.type_ids에 저장."""
+        codes = list(self.indicator_values.keys())
+
+        conn = self._get_conn()
+        cur = conn.cursor()
+
+        placeholders = ",".join(["%s"] * len(codes))
+        try:
+            sql = f"""
+                    SELECT code, id
+                    FROM indicator_types
+                    WHERE code IN ({placeholders});
+                """
+
+            cur.execute(sql, codes)
+            self.type_ids = {code: idx for code, idx in cur.fetchall()}
+        finally:
+            cur.close()
+            self._put_conn(conn)
 
     def fetch_vix(self) -> float | None:
         try:
@@ -21,54 +52,50 @@ class MarketCollector(BaseCollector):
         except Exception as e:
             logger.error(f"VIX 지수 가져오기 실패: {e}")
         return None
+    
+    @staticmethod
+    def fetch_fear_greed() -> int | None:
+        # 1) Chrome 옵션 세팅 (headless)
+        # 로컬에 설치된 크롬 사용: (필요시 경로 지정)
+        # opts.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-    def fetch_fear_greed(self) -> int | None:
+
         try:
-            url = "https://edition.cnn.com/markets/fear-and-greed"
-            headers = {"User-Agent": "Mozilla/5.0"}
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
+            # 3) 페이지 열고, 숫자 엘리먼트가 보일 때까지 최대 10초 대기
+            driver.get("https://edition.cnn.com/markets/fear-and-greed")
+            span = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR,
+                  "span.market-fng-gauge__dial-number-value"))
+            )
+            text = span.text.strip()
+            return int(text) if text.isdigit() else None
 
-            soup = BeautifulSoup(response.text, "html.parser")
+        finally:
+            driver.quit()
 
-            # 첫 번째 위치 (큰 숫자)
-            index_element = soup.find("div", class_="FearGreedIndex__Dial-nn12s3-2")
-            if index_element:
-                return int(index_element.text.strip())
-
-            # 두 번째 백업 위치
-            fallback = soup.find("div", class_="FearGreedIndex__Value-nn12s3-3")
-            if fallback:
-                return int(fallback.text.strip())
-
-            raise ValueError("Fear & Greed 지수 값을 찾을 수 없음")
-        except Exception as e:
-            logger.error(f"Fear & Greed Index 크롤링 실패: {e}")
-            return None
-
-    def infer_market_trend(self, vix: float, fear: int) -> str:
-        if vix is None or fear is None:
-            return "Unknown"
-        if vix > 25 or fear < 30:
-            return "Bearish"
-        elif vix < 15 and fear > 60:
-            return "Bullish"
-        return "Neutral"
-
-    def save_market_indicator(self, vix: float, fear: int, trend: str) -> bool:
+    def save_market_indicator(self, vix: float, fear: int) -> bool:
+        today = date.today()
+        payload = [
+            ("vix",                 vix),
+            ("fear_greed_index",    fear),
+        ]
+        
         conn = self._get_conn()
         cur = conn.cursor()
+    
         try:
-            cur.execute("""
-                INSERT INTO market_indicators (date, vix, fear_greed_index, market_trend)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (date) DO UPDATE SET
-                    vix = EXCLUDED.vix,
-                    fear_greed_index = EXCLUDED.fear_greed_index,
-                    market_trend = EXCLUDED.market_trend;
-            """, (date.today(), vix, fear, trend))
+            for code, val in payload:
+                type_id = self.type_ids.get(code)
+                val_str = None if val is None else str(val)
+                last_updated = datetime.now(timezone.utc)
+                cur.execute("""
+                    INSERT INTO market_indicators (date, indicator_type_id, value)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (date, indicator_type_id) DO UPDATE
+                        SET value = EXCLUDED.value;
+                """, (today, type_id, val_str, last_updated))
             conn.commit()
-            logger.info(f"시장 지표 저장 완료 - VIX: {vix}, FearGreed: {fear}, Trend: {trend}")
+            logger.info(f"시장 지표 저장 완료 - VIX: {vix}, FearGreed: {fear}")
             return True
         except Exception as e:
             conn.rollback()
@@ -79,16 +106,11 @@ class MarketCollector(BaseCollector):
             self._put_conn(conn)
 
     def run(self):
-        vix = self.fetch_vix()
-        fear = self.fetch_fear_greed()
-        trend = self.infer_market_trend(vix, fear)
-        return self.save_market_indicator(vix, fear, trend)
-    
-    def close(self):
-        super().close()
+        return self.save_market_indicator(self.vix, self.fear)
+
 
 
 if __name__ == "__main__":
     collector = MarketCollector()
     collector.run()
-    collector.close()
+    collector.close_pool()

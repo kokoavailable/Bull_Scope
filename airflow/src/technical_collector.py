@@ -141,9 +141,6 @@ class TechnicalCollector(BaseCollector):
                 results[symbol] = success
         return results
 
-    def close(self):
-        super().close()
-
 
 if __name__ == "__main__":
     # 예시: DB에 저장된 심볼 목록 가져와서 처리
@@ -158,4 +155,4 @@ if __name__ == "__main__":
     result = collector.update_all_technicals_parallel(symbols, max_workers=12)
     for symbol, success in result.items():
         logger.info(f"{symbol} 기술적 지표 저장 {'성공' if success else '실패'}")
-    collector.close()
+    collector.close_pool()

@@ -9,9 +9,10 @@ from src.price_collector      import PriceCollector
 from src.fundamental_collector import FundamentalCollector
 from src.technical_collector  import TechnicalCollector
 from src.market_collector     import MarketCollector
+from helper.common import logger
 
 @dag(
-    schedule_interval=None,           # 수동 트리거 전용
+    schedule=None,           # 수동 트리거 전용
     start_date=pendulum.datetime(2025, 5, 29, tz="Asia/Seoul"),
     catchup=False,
     tags=["init","etl"]
@@ -21,37 +22,37 @@ def init_full_etl():
     @task()
     def init_stocks() -> list[str]:
         c = StockCollector()
-        c.update_stock_list(max_symbols=1000, max_workers=16)
-        syms_df = c.fetch_stock_symbols(market="US")
-        c.close()
+        c.update_stock_list(max_symbols=300, batch_size=100, max_workers=4)
+        syms_df = c.fetch_stock_symbols()
+        c.close_pool()
         return syms_df["symbol"].tolist()
 
     @task()
     def init_prices(symbols: list[str]):
         c = PriceCollector()
         c.update_all(period="max", interval="1d", batch_size=500, pause=0.5)
-        c.close()
+        c.close_pool()
         return True
 
     @task()
     def init_fundamentals(symbols: list[str]):
         c = FundamentalCollector()
         c.update_all_parallel(market="US", max_workers=8)
-        c.close()
+        c.close_pool()
         return True
 
     @task()
     def init_market():
         c = MarketCollector()
         c.run()
-        c.close()
+        c.close_pool()
         return True
 
     @task()
     def init_technicals(symbols: list[str]):
         c = TechnicalCollector()
         c.update_all_technicals_parallel(symbols, max_workers=12)
-        c.close()
+        c.close_pool()
         return True
 
     # 워크플로우 정의

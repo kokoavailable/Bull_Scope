@@ -51,7 +51,7 @@ class FundamentalCollector(BaseCollector):
 
     def fetch_fundamental_data(self, symbol: str):
         try:
-            info = yf.Ticker(symbol, session=YF_SESSION).info
+            info = yf.Ticker(symbol).info
             if not info:
                 logger.warning(f"[{symbol}] fundamentals 없음")
                 return None

@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
-from airflow.src.data_collector import DataCollector
+from src.price_collector import DataCollector
 from helper.common import logger
 
 def initial_full_update():

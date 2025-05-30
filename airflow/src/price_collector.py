@@ -31,8 +31,7 @@ class PriceCollector(BaseCollector):
             group_by    = "ticker",
             auto_adjust = False,
             threads     = True,
-            progress    = False,
-            session     = YF_SESSION
+            progress    = False
         )
 
         out: Dict[str, pd.DataFrame] = {}
@@ -122,10 +121,6 @@ class PriceCollector(BaseCollector):
             time.sleep(pause)   # polite pause between batches
 
         return results
-
-
-    def close(self):
-        super().close()
 
 # if __name__ == "__main__":
 #     collector = PriceCollector()

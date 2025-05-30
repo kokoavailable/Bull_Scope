@@ -2,10 +2,10 @@
 from airflow.decorators import dag, task
 from datetime import datetime
 import pendulum
-from technical_collector import TechnicalCollector
+from src.technical_collector import TechnicalCollector
 from airflow.sensors.external_task import ExternalTaskSensor
 
-@dag(schedule_interval=None,
+@dag(schedule=None,
      start_date=pendulum.datetime(2025,5,29,tz="Asia/Seoul"),
      catchup=False, tags=["etl","technicals"])
 def daily_technicals():

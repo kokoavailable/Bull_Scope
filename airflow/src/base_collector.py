@@ -1,13 +1,15 @@
 # collectors/base.py
 import threading
 from psycopg2.pool import ThreadedConnectionPool
-from helper.common import DB_PARAMS
+from helper.common import DB_PARAMS, logger
 
 class BaseCollector:
     _lock = threading.Lock()
     connection_pool = None
 
     def __init__(self, minconn=4, maxconn=16):
+
+        logger.info(f"current db param : {DB_PARAMS}")
         with self.__class__._lock:
             if self.__class__.connection_pool is None:
                 self.__class__.connection_pool = ThreadedConnectionPool(

@@ -4,7 +4,7 @@ from datetime import datetime
 import pendulum
 from src.stock_collector import StockCollector
 
-@dag(schedule_interval="0 3 * * 1",
+@dag(schedule="0 3 * * 1",
      start_date=pendulum.datetime(2025,5,29,tz="Asia/Seoul"),
      catchup=False, tags=["stocks"])
 def weekly_stock_list():

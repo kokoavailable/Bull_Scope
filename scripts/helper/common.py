@@ -3,10 +3,21 @@
 """
 import configparser
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from loguru import logger
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import pandas as pd
+import requests
+import sys
+
+from functools import lru_cache
+
+from typing import List
 
 # from sqlalchemy import create_engine
 # from sqlalchemy.orm import sessionmaker
@@ -23,6 +34,23 @@ rdb_port = os.environ.get("RDB_PORT")
 rdb_name = os.environ.get("RDB_NAME")
 log_level = os.environ.get("LOG_LEVEL")
 
+# 셀레니움 옵션 객체
+opts = Options()
+opts.add_argument("--headless")
+opts.add_argument("--disable-gpu")
+opts.add_argument("--no-sandbox")
+
+def get_driver():
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--no-sandbox")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=opts)
+
+    return driver
+
 DB_PARAMS = {
     "dbname": rdb_name,
     "user": rdb_user,
@@ -31,7 +59,20 @@ DB_PARAMS = {
     "port": rdb_port
 }
 
-logger.info(f"✅ Loaded DB_PARAMS: {DB_PARAMS}")
+INDICATOR_CODES = ["vix", "fear_greed_index"]
+
+URL_NASDAQ_LISTING = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
+
+@lru_cache  # 한 번만 내려받아 메모리에 캐싱
+def fetch_stock_symbols() -> list[str]:
+    df = pd.read_csv(URL_NASDAQ_LISTING, sep="|")
+
+    # 티커 전처리
+    df = df[df["Test Issue"] != "Y"]
+    df = df[df["Security Name"].str.contains("Common Stock", na=False)]
+    df = df[~df["Symbol"].str.contains(r"[.$]", regex=True)]
+    df = df[df["Symbol"].notna()]
+    return df.loc[df["Symbol"].notna(), "Symbol"].tolist()
 
 ##### 로컬 환경일 때만 config.ini 읽기
 
@@ -50,8 +91,15 @@ logger.info(f"✅ Loaded DB_PARAMS: {DB_PARAMS}")
 
 ###### 로거
 
+# ──────────────────────────────────────────────
+# 헬퍼: 리스트 → 고정 크기 배치
+# ──────────────────────────────────────────────
+def chunked(seq: List[str], n: int = 100):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
 
-
+import os
+print("LOG_LEVEL:", os.environ.get("LOG_LEVEL"))
 
 def setup_logging():
     """
@@ -60,21 +108,24 @@ def setup_logging():
     """
     logger.remove()
 
-    # 로그 파일 경로 설정
+    if 'AIRFLOW_HOME' in os.environ:
+        log_dir = os.path.join(os.environ['AIRFLOW_HOME'], 'logs', 'custom')
+    else:
+        log_dir = './logs'
+    
     log_file_path = os.path.join(
-        '..', 
-        'logs', 
+        log_dir,
         f"{app_env}_{datetime.now().strftime('%Y-%m-%d')}.log"
     )
-
+    
     # 로그 디렉토리 생성
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
-    # 콘솔 핸들러 추가 (중요!)
+
     logger.add(
-        sink=lambda msg: print(msg, end=""),  # 콘솔 출력
+        sink=sys.stderr,
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level=log_level.upper(),
+        level="INFO",
         colorize=True
     )
 
@@ -82,7 +133,7 @@ def setup_logging():
     logger.add(
         sink=log_file_path,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        level="DEBUG",  # 로그 레벨 설정
+        level="INFO",
         rotation="1 day",  # 하루마다 로그 파일 회전
         retention="30 days",  # 30일간 로그 파일 보관
         compression="zip",  # 압축 저장
@@ -94,6 +145,8 @@ def setup_logging():
 
 # 로그 설정 함수 호출 싱글톤
 logger = setup_logging()
+
+driver = get_driver()
 
 # ### RDB 연결 정보
 # rdb_user = config.get(app_env, 'RDB_USER')
@@ -146,3 +199,8 @@ logger = setup_logging()
 #             logger.error("An error occurred", exc_info=True)
 #             await db.rollback()
 #             raise
+
+
+if __name__ == "__main__":
+    logger.info("이건 무조건 떠야 정상 (loguru 단독 테스트)")
+    print("이건 print 테스트")

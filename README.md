@@ -183,6 +183,13 @@ You said:
 
 수행 -> 디비 유저 계정 참조 오류 잡아냄.
 
+에어플로우 홈, 파이썬 패스 확인 
+echo $AIRFLOW_HOME
+echo $PYTHONPATH
+
+echo 'export AIRFLOW_HOME=/Users/koko/bull_scope/airflow' >> ~/.zshrc
+echo 'export PYTHONPATH=/Users/koko/bull_scope/airflow' >> ~/.zshrc
+
 
 
 ## 의존성 설치
