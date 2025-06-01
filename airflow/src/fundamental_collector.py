@@ -85,7 +85,7 @@ class FundamentalCollector(BaseCollector):
             cols = [
                 "symbol", "date", "market_cap", "pe_ratio", "pb_ratio",
                 "debt_to_equity", "current_ratio", "quick_ratio",
-                "roe", "roa", "eps", "revenue", "net_income"
+                "roe", "roa", "eps", "revenue", "net_income", "last_updated"
             ]
             records = [tuple(r.get(c) for c in cols) for r in rows]
 
@@ -103,7 +103,8 @@ class FundamentalCollector(BaseCollector):
                     roa            = EXCLUDED.roa,
                     eps            = EXCLUDED.eps,
                     revenue        = EXCLUDED.revenue,
-                    net_income     = EXCLUDED.net_income;
+                    net_income     = EXCLUDED.net_income,
+                    last_updated   = EXCLUDED.last_updated;
             """
             execute_values(cur, sql, records)
             conn.commit()

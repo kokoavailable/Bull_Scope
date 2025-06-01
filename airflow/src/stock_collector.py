@@ -1,13 +1,9 @@
 import pandas as pd
 import yfinance as yf
-import psycopg2
 from psycopg2.extras import execute_values
-from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime
-from helper.common import logger, DB_PARAMS, YF_SESSION
+from helper.common import logger
 import concurrent.futures
-from typing import List, Dict
-import requests
 from src.base_collector import BaseCollector
 import time
 from datetime import datetime, timezone

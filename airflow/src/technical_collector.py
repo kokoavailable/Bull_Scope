@@ -74,12 +74,13 @@ class TechnicalCollector(BaseCollector):
         try:
             df["stock_id"] = stock_id
             df["date"] = pd.to_datetime(df["date"]).dt.date
+            df["last_updated"] = datetime.now()
 
             records = df[[
                 "stock_id", "date", "rsi_14", "macd", "macd_signal", "macd_histogram",
                 "ma_20", "ma_50", "ma_200",
                 "bolinger_upper", "bolinger_middle", "bolinger_lower",
-                "ppo", "ma_golden_cross", "macd_golden_cross"
+                "ppo", "ma_golden_cross", "macd_golden_cross", "last_updated"
             ]].to_records(index=False)
 
             sql = """
@@ -87,7 +88,7 @@ class TechnicalCollector(BaseCollector):
                     stock_id, date, rsi_14, macd, macd_signal, macd_histogram,
                     ma_20, ma_50, ma_200,
                     bolinger_upper, bolinger_middle, bolinger_lower,
-                    ppo, ma_golden_cross, macd_golden_cross
+                    ppo, ma_golden_cross, macd_golden_cross, last_updated
                 )
                 VALUES %s
                 ON CONFLICT (stock_id, date) DO UPDATE SET
@@ -103,7 +104,8 @@ class TechnicalCollector(BaseCollector):
                     bolinger_lower = EXCLUDED.bolinger_lower,
                     ppo = EXCLUDED.ppo,
                     ma_golden_cross = EXCLUDED.ma_golden_cross,
-                    macd_golden_cross = EXCLUDED.macd_golden_cross;
+                    macd_golden_cross = EXCLUDED.macd_golden_cross,
+                    last_updated = EXCLUDED.last_updated;
             """
             execute_values(cur, sql, records)
             conn.commit()

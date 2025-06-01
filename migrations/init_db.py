@@ -3,6 +3,7 @@ import psycopg2
 
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import Optional
 import os
 
 # from sqlalchemy import create_engine
@@ -28,9 +29,9 @@ DB_PARAMS = {
     "port": rdb_port
 }
 
-def run_migration(sql_path: str):
+def run_migration(sql_path: Optional[str] = None):
     conn = psycopg2.connect(**DB_PARAMS)
-    sql_path= "sql/seeds/20250528_create_tables.sql"
+    sql_path= "sql/migrations/20250528_create_tables.sql"
     try:
         with conn.cursor() as cur, open(sql_path, "r") as f:
             cur.execute(f.read())

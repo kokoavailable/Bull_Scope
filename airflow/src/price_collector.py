@@ -64,16 +64,17 @@ class PriceCollector(BaseCollector):
             df["stock_id"] = stock_id
             df["date"] = pd.to_datetime(df["Date"]).dt.date
             df["adj_close"] = df.get("Adj Close", df["Close"])
+            df["last_updated"] = datetime.now()
             
             records = df[[
                 "stock_id", "date", "Open", "High", "Low", 
-                "Close", "adj_close", "Volume"
+                "Close", "adj_close", "Volume", "last_updated"
             ]].to_records(index=False)
 
             # UPSERT INTO with ON CONFLICT
             sql = """
             INSERT INTO stock_prices (
-                stock_id, date, open, high, low, close, adj_close, volume
+                stock_id, date, open, high, low, close, adj_close, volume, last_updated
             ) VALUES %s
             ON CONFLICT (stock_id, date) DO UPDATE SET
                 open        = EXCLUDED.open,
@@ -81,7 +82,8 @@ class PriceCollector(BaseCollector):
                 low         = EXCLUDED.low,
                 close       = EXCLUDED.close,
                 adj_close   = EXCLUDED.adj_close,
-                volume      = EXCLUDED.volume;
+                volume      = EXCLUDED.volume,
+                last_updated = EXCLUDED.last_updated;
             """
             execute_values(cur, sql, records)
             conn.commit()

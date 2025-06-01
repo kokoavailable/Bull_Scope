@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS stock_prices (
     close FLOAT,
     adj_close FLOAT,
     volume INTEGER,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(stock_id, date)
 );
 
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS stock_fundamentals (
     eps FLOAT,
     revenue FLOAT,
     net_income FLOAT,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(stock_id, date)
 );
 
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS stock_technicals (
     ppo FLOAT,
     ma_golden_cross BOOLEAN,
     macd_golden_cross BOOLEAN,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(stock_id, date)
 );
 
@@ -74,7 +74,9 @@ CREATE TABLE IF NOT EXISTS support_resistance (
     price_level FLOAT NOT NULL,
     is_support BOOLEAN DEFAULT TRUE,
     strength INTEGER DEFAULT 1,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    method VARCHAR NOT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    unique (stock_id, date, price_level, is_support, method)
 );
 
 -- 시장 지표 종류 테이블
@@ -93,6 +95,6 @@ CREATE TABLE IF NOT EXISTS market_indicators (
     date DATE NOT NULL,
     indicator_type_id INT NOT NULL REFERENCES indicator_types(id),
     value VARCHAR,                      -- 다양한 타입을 저장하고 싶으면 VARCHAR가 유연함(숫자도 문자로 저장)
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(date, indicator_type_id)
 );
