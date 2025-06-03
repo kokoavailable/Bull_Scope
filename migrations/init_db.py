@@ -31,7 +31,7 @@ DB_PARAMS = {
 
 def run_migration(sql_path: Optional[str] = None):
     conn = psycopg2.connect(**DB_PARAMS)
-    sql_path= "sql/migrations/20250528_create_tables.sql"
+    sql_path= "sql/seeds/20250529_seed_tables.sql"
     try:
         with conn.cursor() as cur, open(sql_path, "r") as f:
             cur.execute(f.read())

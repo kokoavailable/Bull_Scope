@@ -24,24 +24,46 @@ CREATE TABLE IF NOT EXISTS stock_prices (
     UNIQUE(stock_id, date)
 );
 
--- 재무 정보 테이블
-CREATE TABLE IF NOT EXISTS stock_fundamentals (
+-- 재무 지표 종류
+CREATE TABLE IF NOT EXISTS fundamental_indicator_types (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR UNIQUE NOT NULL,      -- ex: 'market_cap', 'pe_ratio', ...
+    name VARCHAR NOT NULL,             -- ex: 'Market Cap', 'PER', ...
+    description TEXT,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 재무 지표 값
+
+CREATE TABLE IF NOT EXISTS stock_fundamental_indicators (
     id BIGSERIAL PRIMARY KEY,
-    stock_id BIGINT REFERENCES stocks(id) ON DELETE CASCADE,
+    stock_id BIGINT NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
     date DATE NOT NULL,
-    market_cap FLOAT,
-    pe_ratio FLOAT,
-    pb_ratio FLOAT,
-    debt_to_equity FLOAT,
-    current_ratio FLOAT,
-    quick_ratio FLOAT,
-    roe FLOAT,
-    roa FLOAT,
-    eps FLOAT,
-    revenue FLOAT,
-    net_income FLOAT,
+    indicator_type_id INT NOT NULL REFERENCES fundamental_indicator_types(id),
+    value FLOAT,                         -- 재무 지표 값 (숫자형)
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(stock_id, date)
+    UNIQUE(stock_id, date, indicator_type_id)
+);
+
+
+-- 기술적 지표 종류 테이블
+CREATE TABLE IF NOT EXISTS technical_indicator_types (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR UNIQUE NOT NULL,        -- ex: 'rsi_14', 'macd', 'ma_5'
+    name VARCHAR NOT NULL,
+    description TEXT,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 기술적 지표 값 테이블
+CREATE TABLE IF NOT EXISTS stock_technical_indicators (
+    id BIGSERIAL PRIMARY KEY,
+    stock_id BIGINT NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    indicator_type_id INT NOT NULL REFERENCES technical_indicator_types(id),
+    value FLOAT,                         -- 지표 값 (숫자형)
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(stock_id, date, indicator_type_id)
 );
 
 -- 기술적 지표 테이블
@@ -53,6 +75,8 @@ CREATE TABLE IF NOT EXISTS stock_technicals (
     macd FLOAT,
     macd_signal FLOAT,
     macd_histogram FLOAT,
+    ma_5 FLOAT,
+    ma_10 FLOAT
     ma_20 FLOAT,
     ma_50 FLOAT,
     ma_200 FLOAT,
@@ -60,8 +84,12 @@ CREATE TABLE IF NOT EXISTS stock_technicals (
     bolinger_middle FLOAT,
     bolinger_lower FLOAT,
     ppo FLOAT,
-    ma_golden_cross BOOLEAN,
+    st_ma_golden_cross BOOLEAN,
+    lt_ma_golden_cross BOOLEAN,
     macd_golden_cross BOOLEAN,
+    st_ma_golden_gap FLOAT,
+    lt_ma_golden_gap FLOAT,
+    macd_golden_gap FLOAT,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(stock_id, date)
 );

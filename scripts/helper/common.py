@@ -59,7 +59,7 @@ DB_PARAMS = {
     "port": rdb_port
 }
 
-INDICATOR_CODES = ["vix", "fear_greed_index"]
+MARKET_INDICATOR_CODES = ["vix", "fear_greed_index"]
 
 URL_NASDAQ_LISTING = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
 

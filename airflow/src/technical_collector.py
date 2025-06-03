@@ -1,18 +1,52 @@
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime
-from helper.common import logger, DB_PARAMS, YF_SESSION
-import concurrent.futures
+from helper.common import logger, DB_PARAMS, fetch_stock_symbols
 import talib
 from src.base_collector import BaseCollector
+import concurrent.futures
+from typing import Dict, List
 
 class TechnicalCollector(BaseCollector):
     connection_pool = None
 
+    _MAP = [
+        "rsi_14", "macd", "macd_signal", "macd_histogram",
+        "ma_20", "ma_50", "ma_200",
+        "bolinger_upper", "bolinger_middle", "bolinger_lower",
+        "ppo", "st_ma_gap", "lt_ma_gap", "macd_gap", "st_golden_cross", "lt_golden_cross", "macd_golden_cross"
+    ]
+
     def __init__(self):
         super().__init__()
+        self.indicator_id_map = self._load_indicator_type_ids()
+
+    def _load_indicator_type_ids(self) -> Dict[str, int]:
+        """technical_indicator_types에서 {code: id} dict 반환"""
+        conn = self._get_conn()
+        cur = conn.cursor()
+        try:
+            codes = self._MAP
+            placeholders = ",".join(["%s"] * len(codes))
+            sql = f"""
+                SELECT code, id
+                  FROM technical_indicator_types
+                 WHERE code IN ({placeholders});
+            """
+            cur.execute(sql, codes)
+            result = dict(cur.fetchall())
+            missing = set(codes) - set(result)
+            if missing:
+                logger.warning(f"technical_indicator_types 누락: {missing}")
+            return result
+        finally:
+            cur.close()
+            self._put_conn(conn)
+
+
+    def fetch_stock_symbols(self, market: str = "US") -> List[str]:
+        return fetch_stock_symbols()
 
     def _get_price_data(self, symbol: str):
         conn = self._get_conn()
@@ -38,15 +72,26 @@ class TechnicalCollector(BaseCollector):
         close = df["close"].values
         index = df["date"]
 
+        upper, middle, lower = talib.BBANDS(close)
+
         rsi_14 = talib.RSI(close, timeperiod=14)
         macd, macd_signal, macd_hist = talib.MACD(close)
-        ma_20 = talib.SMA(close, timeperiod=20)
-        ma_50 = talib.SMA(close, timeperiod=50)
-        ma_200 = talib.SMA(close, timeperiod=200)
-        upper, middle, lower = talib.BBANDS(close)
+        macd = pd.Series(macd, index = df.index)
+
+        ma_5   = df["close"].rolling(window=5).mean()
+        ma_10  = df["close"].rolling(window=10).mean()
+        ma_20 = middle
+
+        ma_50  = df["close"].rolling(window=50).mean()
+        ma_200 = df["close"].rolling(window=200).mean()
         ppo = talib.PPO(close)
 
-        ma_golden_cross = (ma_50 > ma_200) & (ma_50.shift(1) <= ma_200.shift(1))
+        st_ma_gap = ma_5 - ma_10
+        lt_ma_gap = ma_50 - ma_200
+        macd_gap = macd - macd_signal
+
+        st_ma_golden_cross = (ma_5 > ma_10) & (ma_5.shift(1) <= ma_10.shift(1))
+        lt_ma_golden_cross = (ma_50 > ma_200) & (ma_50.shift(1) <= ma_200.shift(1))
         macd_golden_cross = (macd > macd_signal) & (macd.shift(1) <= macd_signal.shift(1))
 
         return pd.DataFrame({
@@ -62,8 +107,12 @@ class TechnicalCollector(BaseCollector):
             "bolinger_middle": middle,
             "bolinger_lower": lower,
             "ppo": ppo,
-            "ma_golden_cross": ma_golden_cross.fillna(False),
-            "macd_golden_cross": macd_golden_cross.fillna(False)
+            "st_ma_gap": st_ma_gap,
+            "lt_ma_gap": lt_ma_gap,
+            "macd_gap": macd_gap,
+            "st_golden_cross": st_ma_golden_cross.fillna(False).astype(float),
+            "lt_golden_cross": lt_ma_golden_cross.fillna(False).astype(float),
+            "macd_golden_cross": macd_golden_cross.fillna(False).astype(float),
         }).dropna(subset=["macd"])
 
     def save_technicals_bulk(self, df: pd.DataFrame, stock_id: int):
@@ -76,35 +125,28 @@ class TechnicalCollector(BaseCollector):
             df["date"] = pd.to_datetime(df["date"]).dt.date
             df["last_updated"] = datetime.now()
 
-            records = df[[
-                "stock_id", "date", "rsi_14", "macd", "macd_signal", "macd_histogram",
-                "ma_20", "ma_50", "ma_200",
-                "bolinger_upper", "bolinger_middle", "bolinger_lower",
-                "ppo", "ma_golden_cross", "macd_golden_cross", "last_updated"
-            ]].to_records(index=False)
+            df_melt = df.melt(
+                id_vars=["date", "stock_id"],
+                value_vars=[c for c in df.columns if c not in ["date", "stock_id", "last_updated"]],
+                var_name="indicator_code",
+                value_name="value"
+            )
+
+            df_melt["indicator_type_id"] = df_melt["indicator_code"].map(self.indicator_id_map)
+            df_melt = df_melt.dropna(subset=["indicator_type_id", "value"])
+            df_melt["indicator_type_id"] = df_melt["indicator_type_id"].astype(int)
+
+            records = [
+                (row.stock_id, row.date, row.indicator_type_id, float(row.value), datetime.now())
+                for row in df_melt.itertuples()
+            ]
 
             sql = """
-                INSERT INTO stock_technicals (
-                    stock_id, date, rsi_14, macd, macd_signal, macd_histogram,
-                    ma_20, ma_50, ma_200,
-                    bolinger_upper, bolinger_middle, bolinger_lower,
-                    ppo, ma_golden_cross, macd_golden_cross, last_updated
-                )
+                INSERT INTO stock_technical_indicators 
+                    (stock_id, date, indicator_type_id, value, last_updated)
                 VALUES %s
-                ON CONFLICT (stock_id, date) DO UPDATE SET
-                    rsi_14 = EXCLUDED.rsi_14,
-                    macd = EXCLUDED.macd,
-                    macd_signal = EXCLUDED.macd_signal,
-                    macd_histogram = EXCLUDED.macd_histogram,
-                    ma_20 = EXCLUDED.ma_20,
-                    ma_50 = EXCLUDED.ma_50,
-                    ma_200 = EXCLUDED.ma_200,
-                    bolinger_upper = EXCLUDED.bolinger_upper,
-                    bolinger_middle = EXCLUDED.bolinger_middle,
-                    bolinger_lower = EXCLUDED.bolinger_lower,
-                    ppo = EXCLUDED.ppo,
-                    ma_golden_cross = EXCLUDED.ma_golden_cross,
-                    macd_golden_cross = EXCLUDED.macd_golden_cross,
+                ON CONFLICT (stock_id, date, indicator_type_id) DO UPDATE SET
+                    value = EXCLUDED.value,
                     last_updated = EXCLUDED.last_updated;
             """
             execute_values(cur, sql, records)

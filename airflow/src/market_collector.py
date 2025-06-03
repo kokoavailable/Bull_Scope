@@ -89,7 +89,7 @@ class MarketCollector(BaseCollector):
                 val_str = None if val is None else str(val)
                 last_updated = datetime.now(timezone.utc)
                 cur.execute("""
-                    INSERT INTO market_indicators (date, indicator_type_id, value)
+                    INSERT INTO market_indicators (date, indicator_type_id, value, last_updated)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (date, indicator_type_id) DO UPDATE
                         SET value = EXCLUDED.value;
