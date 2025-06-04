@@ -18,52 +18,25 @@ class FundamentalCollector(BaseCollector):
     • stock_fundamentals 테이블 (symbol, date) 단위로 UPSERT
     """
     # ──────────────────────────────────────────────
-    # 2) yfinance → fundamentals dict
-    # ──────────────────────────────────────────────
-    _MAP = {
-        "market_cap":      "marketCap",
-        "pe_ratio":        "trailingPE",
-        "pb_ratio":        "priceToBook",
-        "debt_to_equity":  "debtToEquity",
-        "current_ratio":   "currentRatio",
-        "quick_ratio":     "quickRatio",
-        "roe":             "returnOnEquity",
-        "roa":             "returnOnAssets",
-        "eps":             "trailingEps",
-        "revenue":         "totalRevenue",
-        "net_income":      "netIncomeToCommon",
-    }
-
-    # ──────────────────────────────────────────────
     # 초기화 & 테이블 보장
     # ──────────────────────────────────────────────
     def __init__(self):
         super().__init__()
-        self.indicator_id_map = self._load_indicator_type_ids()
+        self.indicator_types = self._load_indicator_types()
 
-    def _load_indicator_type_ids(self) -> Dict[str, int]:
-        """fundamental_indicator_types 테이블에서 {code: id} dict 반환"""
+    def _load_indicator_types(self) -> Dict[str, dict]:
+        """
+        {code: {"id": id, "info_key": info_key, "name": name, ...}} 형태로 반환
+        """
         conn = self._get_conn()
         cur = conn.cursor()
         try:
-            codes = list(self._MAP.keys())
-            placeholders = ",".join(["%s"] * len(codes))
-            sql = f"""
-                SELECT code, id
-                  FROM fundamental_indicator_types
-                 WHERE code IN ({placeholders});
-            """
-            cur.execute(sql, codes)
-            result = dict(cur.fetchall())
-            # 유실 코드 체크
-            missing = set(codes) - set(result)
-            if missing:
-                logger.warning(f"fundamental_indicator_types 누락: {missing}")
-            return result
+            cur.execute("SELECT code, id, info_key FROM fundamental_indicator_types;")
+            rows = cur.fetchall()
+            return {code: {"id": id, "info_key": info_key} for code, id, info_key in rows}
         finally:
             cur.close()
             self._put_conn(conn)
-
         
 
     def fetch_stock_symbols(self, market: str = "US") -> List[str]:
@@ -83,21 +56,13 @@ class FundamentalCollector(BaseCollector):
                 logger.warning(f"[{symbol}] fundamentals 없음")
                 return None
             
-            data = {k: info.get(src) for k, src in self._MAP.items()}
-            data["symbol"] = symbol
-            data["date"] = date.today()     # 일(UTC) 단위 스냅샷
-
-            for k in list(self._MAP):           # market_cap, pe_ratio, ...
-                val = data.get(k)
-                # 문자열 → 숫자 / 변환 실패 시 NaN
+            data = {"symbol": symbol, "date": date.today()}
+            for code, meta in self.indicator_types.items():
+                val = info.get(meta['info_key'])
                 val = pd.to_numeric(val, errors="coerce")
-                # NaN → None  (psycopg2 가 NULL 로 보냄)
-                if pd.isna(val):
-                    data[k] = None
-                else:
-                    data[k] = float(val)
-
+                data[code] = None if pd.isna(val) else float(val)
             return data
+        
         except Exception as e:
             logger.error(f"[{symbol}] fundamentals 가져오기 실패: {e}")
             return None
@@ -115,7 +80,7 @@ class FundamentalCollector(BaseCollector):
         cur = conn.cursor()
         try:
             sql = """
-                INSERT INTO stock_fundamental_indicators
+                INSERT INTO fundamental_indicators
                     (stock_id, date, indicator_type_id, value, last_updated)
                 VALUES %s
                 ON CONFLICT (stock_id, date, indicator_type_id) DO UPDATE SET
@@ -126,11 +91,11 @@ class FundamentalCollector(BaseCollector):
                 (
                     stock_id,
                     r["date"],
-                    self.indicator_id_map[r["indicator_code"]],
+                    self.indicator_types[r["indicator_code"]]["id"],
                     r["value"],
                     datetime.now()
                 )
-                for r in rows if r["value"] is not None and r["indicator_code"] in self.indicator_id_map
+                for r in rows if r["value"] is not None and r["indicator_code"] in self.indicator_types
             ]
             if not records:
                 logger.warning(f"저장할 유효 데이터 없음 (stock_id={stock_id})")
@@ -155,7 +120,7 @@ class FundamentalCollector(BaseCollector):
         date_ = data["date"]
         rows = [
             {"indicator_code": k, "value": data[k], "date": date_}
-            for k in self._MAP.keys()
+            for k in self.indicator_types.keys()
         ]
         ok = self.save_fundamental_bulk(rows, stock_id)
         time.sleep(delay)
@@ -197,7 +162,7 @@ class FundamentalCollector(BaseCollector):
 # ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     collector = FundamentalCollector()
-    summary = collector.update_all_parallel(max_workers=4, delay=0.05)
+    summary = collector.update_all_parallel(max_workers=4, delay=0.1)
 
     for sym, ok in summary.items():
         if ok:

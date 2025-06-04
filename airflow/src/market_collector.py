@@ -34,7 +34,7 @@ class MarketCollector(BaseCollector):
         try:
             sql = f"""
                     SELECT code, id
-                    FROM indicator_types
+                    FROM market_indicator_types
                     WHERE code IN ({placeholders});
                 """
 

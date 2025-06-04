@@ -9,40 +9,27 @@ import concurrent.futures
 from typing import Dict, List
 
 class TechnicalCollector(BaseCollector):
-    connection_pool = None
-
-    _MAP = [
-        "rsi_14", "macd", "macd_signal", "macd_histogram",
-        "ma_20", "ma_50", "ma_200",
-        "bolinger_upper", "bolinger_middle", "bolinger_lower",
-        "ppo", "st_ma_gap", "lt_ma_gap", "macd_gap", "st_golden_cross", "lt_golden_cross", "macd_golden_cross"
-    ]
-
     def __init__(self):
         super().__init__()
-        self.indicator_id_map = self._load_indicator_type_ids()
+        self.indicator_id_map = self._load_indicator_id_map()
 
-    def _load_indicator_type_ids(self) -> Dict[str, int]:
+    def _load_indicator_id_map(self) -> Dict[str, int]:
         """technical_indicator_types에서 {code: id} dict 반환"""
         conn = self._get_conn()
         cur = conn.cursor()
         try:
-            codes = self._MAP
-            placeholders = ",".join(["%s"] * len(codes))
-            sql = f"""
-                SELECT code, id
-                  FROM technical_indicator_types
-                 WHERE code IN ({placeholders});
-            """
-            cur.execute(sql, codes)
+            cur.execute("SELECT code, id FROM technical_indicator_types;")
             result = dict(cur.fetchall())
-            missing = set(codes) - set(result)
-            if missing:
-                logger.warning(f"technical_indicator_types 누락: {missing}")
             return result
         finally:
             cur.close()
             self._put_conn(conn)
+
+    def get_indicator_id(self, code: str) -> int:
+        iid = self.indicator_id_map.get(code)
+        if iid is None:
+            raise ValueError(f"Indicator code '{code}' not found in technical_indicator_types.")
+        return iid
 
 
     def fetch_stock_symbols(self, market: str = "US") -> List[str]:
@@ -132,7 +119,7 @@ class TechnicalCollector(BaseCollector):
                 value_name="value"
             )
 
-            df_melt["indicator_type_id"] = df_melt["indicator_code"].map(self.indicator_id_map)
+            df_melt["indicator_type_id"] = df_melt["indicator_code"].apply(self.indicator_id_map)
             df_melt = df_melt.dropna(subset=["indicator_type_id", "value"])
             df_melt["indicator_type_id"] = df_melt["indicator_type_id"].astype(int)
 

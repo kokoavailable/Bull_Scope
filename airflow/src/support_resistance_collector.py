@@ -10,6 +10,25 @@ import concurrent.futures
 class SupportResistanceCollector(BaseCollector):
     def __init__(self):
         super().__init__()
+        self.method_id_map = self._load_method_id_map()
+
+    def _load_method_id_map(self):
+        """support_resistance_methods에서 {code: id} dict 반환"""
+        conn = self._get_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT code, id FROM support_resistance_methods;")
+            result = dict(cur.fetchall())
+            return result
+        finally:
+            cur.close()
+            self._put_conn(conn)
+
+    def get_method_id(self, method_code: str) -> int:
+        mid = self.method_id_map.get(method_code)
+        if mid is None:
+            raise ValueError(f"Method code '{method_code}' not found in support_resistance_methods.")
+        return mid
 
     # ────────────────────────────────────────────────────────────────────────────
     # 1) 데일리 피벗 포인트 계산 및 저장
@@ -47,27 +66,27 @@ class SupportResistanceCollector(BaseCollector):
             R2 = P + (H - L)
             S2 = P - (H - L)
 
-            recs = []
-            # R1, R2 → 저항(is_support=False)
-            recs.append((symbol, today, float(R1), False, 1, 'pivot_daily', datetime.now()))
-            recs.append((symbol, today, float(R2), False, 1, 'pivot_daily', datetime.now()))
-            # S1, S2 → 지지(is_support=True)
-            recs.append((symbol, today, float(S1), True, 1, 'pivot_daily', datetime.now()))
-            recs.append((symbol, today, float(S2), True, 1, 'pivot_daily', datetime.now()))
+            method_id = self.get_method_id('pivot_daily')
+            recs = [
+                (symbol, today, float(R1), False, None, method_id, datetime.now()),
+                (symbol, today, float(R2), False, None, method_id, datetime.now()),
+                (symbol, today, float(S1), True, None, method_id, datetime.now()),
+                (symbol, today, float(S2), True, None, method_id, datetime.now()),
+            ]
 
             # 4) stock_id 조회, support_resistance Upsert
             #    (symbol → stock_id) 매핑 한번에 해 두고 내부적으로 재활용하거나,  
             #    여기선 간단히 subquery로 처리
             sql = """
             INSERT INTO support_resistance (
-                stock_id, date, price_level, is_support, strength, method, last_updated
+                stock_id, date, price_level, is_support, strength, method_id, last_updated
             )
             VALUES (
                 (SELECT id FROM stocks WHERE symbol = %s),
                 %s, %s, %s, %s, %s, %s
             )
-            ON CONFLICT (stock_id, date, price_level, is_support, method) DO UPDATE SET
-                strength     = support_resistance.strength + 1,
+            ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
+                strength     = EXCLUDED.strength,
                 last_updated = EXCLUDED.last_updated;
             """
             # # execute 여러 번 반복하기보다는 execute_values로 batch 처리해도 됩니다.
@@ -134,22 +153,24 @@ class SupportResistanceCollector(BaseCollector):
             S2 = P - (H - L)
 
             # 오늘(또는 이번주 월요일 날짜 기준)으로 저장
-            recs = []
-            recs.append((symbol, this_monday, float(R1), False, 1, 'pivot_weekly', datetime.now()))
-            recs.append((symbol, this_monday, float(R2), False, 1, 'pivot_weekly', datetime.now()))
-            recs.append((symbol, this_monday, float(S1), True, 1, 'pivot_weekly', datetime.now()))
-            recs.append((symbol, this_monday, float(S2), True, 1, 'pivot_weekly', datetime.now()))
+            method_id = self.get_method_id('pivot_weekly')
+            recs = [
+                (symbol, this_monday, float(R1), False, None, method_id, datetime.now()),
+                (symbol, this_monday, float(R2), False, None, method_id, datetime.now()),
+                (symbol, this_monday, float(S1), True, None, method_id, datetime.now()),
+                (symbol, this_monday, float(S2), True, None, method_id, datetime.now()),
+            ]
 
             sql = """
             INSERT INTO support_resistance (
-                stock_id, date, price_level, is_support, strength, method, last_updated
+                stock_id, date, price_level, is_support, strength, method_id, last_updated
             )
             VALUES (
                 (SELECT id FROM stocks WHERE symbol = %s),
                 %s, %s, %s, %s, %s, %s
             )
-            ON CONFLICT (stock_id, date, price_level, is_support, method) DO UPDATE SET
-                strength     = support_resistance.strength + 1,
+            ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
+                strength     = support_resistance.strength,
                 last_updated = EXCLUDED.last_updated;
             """
             execute_values(cur, sql, recs, template=None, page_size=100)
@@ -238,9 +259,11 @@ class SupportResistanceCollector(BaseCollector):
             all_bins = vp_buckets.reset_index()   # index(=price_bin)를 컬럼으로 만듦
             total_volume = all_bins["volume_sum"].sum()
 
+            method_id = self.get_method_id("vp_daily")
+            all_bins["method_id"]  = method_id
             all_bins["is_support"] = all_bins["price_bin"] < avg_close
             all_bins["strength"]   = all_bins["volume_sum"] / total_volume
-            all_bins["method"]     = "vp_daily"
+            all_bins["method_id"]  = self.get_method_id("vp_daily")
             all_bins["date"]       = datetime.now().date()
             all_bins["stock_id"]   = stock_id
             all_bins["last_updated"] = datetime.now()
@@ -248,16 +271,16 @@ class SupportResistanceCollector(BaseCollector):
             # 7) support_resistance에 Upsert (stock_id, date, price_level, is_support, method 단일성)
             # price_bin → price_level 로 컬럼명 변경
             to_upsert = all_bins[[
-                "stock_id", "date", "price_bin", "is_support", "strength", "method", "last_updated"
+                "stock_id", "date", "price_bin", "is_support", "strength", "method_id", "last_updated"
             ]].rename(columns={"price_bin": "price_level"})
 
 
             records = to_upsert.to_records(index=False)
             sql = """
             INSERT INTO support_resistance (
-                stock_id, date, price_level, is_support, strength, method, last_updated
+                stock_id, date, price_level, is_support, strength, method_id, last_updated
             ) VALUES %s
-            ON CONFLICT (stock_id, date, price_level, is_support, method) DO UPDATE SET
+            ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
                 strength     = EXCLUDED.strength,
                 last_updated = EXCLUDED.last_updated;
             """
@@ -343,21 +366,21 @@ class SupportResistanceCollector(BaseCollector):
             total_volume = all_bins["volume_sum"].sum()
             all_bins["is_support"] = all_bins["price_level"] < avg_close
             all_bins["strength"] = (all_bins["volume_sum"] / total_volume * 100).round(1)
-            all_bins["method"] = "vp_longterm"
+            all_bins["method_id"] = self.get_method_id("vp_longterm")
             all_bins["date"] = today
             all_bins["stock_id"] = stock_id
             all_bins["last_updated"] = datetime.now()
 
             to_upsert = all_bins[[
-                "stock_id", "date", "price_level", "is_support", "strength", "method", "last_updated"
+                "stock_id", "date", "price_level", "is_support", "strength", "method_id", "last_updated"
             ]]
 
             recs_res = to_upsert.to_records(index=False)
             sql_res = """
             INSERT INTO support_resistance (
-                stock_id, date, price_level, is_support, strength, method, last_updated
+                stock_id, date, price_level, is_support, strength, method_id, last_updated
             ) VALUES %s
-            ON CONFLICT (stock_id, date, price_level, is_support, method) DO UPDATE SET
+            ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
                 strength     = EXCLUDED.strength,
                 last_updated = EXCLUDED.last_updated;
             """
