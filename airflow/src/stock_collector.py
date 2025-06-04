@@ -95,14 +95,11 @@ class StockCollector(BaseCollector):
             cur.close()
             self._put_conn(conn)
 
-    def update_stock_list(self, max_symbols=9000, batch_size=100, max_workers=8, delay=0.05):
+    def update_stock_list(self, batch_size=100, max_workers=8, delay=0.05):
         try:
-            logger.info(f"Stock 리스트 업데이트 시작: 최대 {max_symbols}개, 배치당 {batch_size}개, 워커 {max_workers}개")
+            logger.info(f"Stock 리스트 업데이트 시작: 배치당 {batch_size}개, 워커 {max_workers}개")
             df = self.fetch_stock_symbols()
             logger.info(f"총 {len(df)}개 심볼 수집됨")
-            if max_symbols:
-                df = df.head(max_symbols)
-                logger.info(f"{max_symbols}개로 자름, 실제 처리할 심볼: {len(df)}개")
             total = len(df)
             results = []
             for start in range(0, total, batch_size):
@@ -132,5 +129,5 @@ class StockCollector(BaseCollector):
 
 if __name__ == "__main__":
     collector = StockCollector()
-    collector.update_stock_list(max_symbols=9000, max_workers=4, delay=0.05)
+    collector.update_stock_list(max_workers=4, delay=0.05)
     collector.close_pool()

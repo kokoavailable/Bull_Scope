@@ -162,7 +162,7 @@ class FundamentalCollector(BaseCollector):
 # ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     collector = FundamentalCollector()
-    summary = collector.update_all_parallel(max_workers=4, delay=0.1)
+    summary = collector.update_all_parallel(max_workers=4, delay=0.2)
 
     for sym, ok in summary.items():
         if ok:

@@ -64,6 +64,7 @@ class TechnicalCollector(BaseCollector):
         rsi_14 = talib.RSI(close, timeperiod=14)
         macd, macd_signal, macd_hist = talib.MACD(close)
         macd = pd.Series(macd, index = df.index)
+        macd_signal = pd.Series(macd_signal, index = df.index)
 
         ma_5   = df["close"].rolling(window=5).mean()
         ma_10  = df["close"].rolling(window=10).mean()
@@ -119,7 +120,7 @@ class TechnicalCollector(BaseCollector):
                 value_name="value"
             )
 
-            df_melt["indicator_type_id"] = df_melt["indicator_code"].apply(self.indicator_id_map)
+            df_melt["indicator_type_id"] = df_melt["indicator_code"].map(self.indicator_id_map)
             df_melt = df_melt.dropna(subset=["indicator_type_id", "value"])
             df_melt["indicator_type_id"] = df_melt["indicator_type_id"].astype(int)
 
@@ -129,7 +130,7 @@ class TechnicalCollector(BaseCollector):
             ]
 
             sql = """
-                INSERT INTO stock_technical_indicators 
+                INSERT INTO technical_indicators 
                     (stock_id, date, indicator_type_id, value, last_updated)
                 VALUES %s
                 ON CONFLICT (stock_id, date, indicator_type_id) DO UPDATE SET
@@ -160,7 +161,8 @@ class TechnicalCollector(BaseCollector):
             logger.error(f"{symbol} 처리 실패: {e}")
             return symbol, False
 
-    def update_all_technicals_parallel(self, symbols: list[str], max_workers=8):
+    def update_all_technicals_parallel(self, max_workers=8):
+        symbols = self.fetch_stock_symbols()
         results = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_symbol = {
@@ -170,20 +172,17 @@ class TechnicalCollector(BaseCollector):
             for future in concurrent.futures.as_completed(future_to_symbol):
                 symbol, success = future.result()
                 results[symbol] = success
+
+        for symbol, success in results.items():
+            if success:
+                logger.info(f"{symbol} 기술적 지표 저장 성공")
+            else:
+                logger.warning(f"{symbol} 기술적 지표 저장 실패")
+
         return results
 
 
 if __name__ == "__main__":
-    # 예시: DB에 저장된 심볼 목록 가져와서 처리
-    conn = psycopg2.connect(**DB_PARAMS)
-    cur = conn.cursor()
-    cur.execute("SELECT symbol FROM stocks LIMIT 100;")
-    symbols = [row[0] for row in cur.fetchall()]
-    cur.close()
-    conn.close()
-
     collector = TechnicalCollector()
-    result = collector.update_all_technicals_parallel(symbols, max_workers=12)
-    for symbol, success in result.items():
-        logger.info(f"{symbol} 기술적 지표 저장 {'성공' if success else '실패'}")
+    collector.update_all_technicals_parallel( max_workers=12)
     collector.close_pool()
