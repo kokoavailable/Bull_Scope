@@ -4,7 +4,7 @@ import yfinance as yf
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime, date, timezone
-from helper.common import logger, driver
+from helper.common import logger, get_driver
 from src.base_collector import BaseCollector
 from typing import Optional
 from requests_html import HTMLSession
@@ -61,6 +61,7 @@ class MarketCollector(BaseCollector):
 
 
         try:
+            driver = get_driver()
             # 3) 페이지 열고, 숫자 엘리먼트가 보일 때까지 최대 10초 대기
             driver.get("https://edition.cnn.com/markets/fear-and-greed")
             span = WebDriverWait(driver, 10).until(

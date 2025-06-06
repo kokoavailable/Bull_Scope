@@ -34,15 +34,9 @@ rdb_port = os.environ.get("RDB_PORT")
 rdb_name = os.environ.get("RDB_NAME")
 log_level = os.environ.get("LOG_LEVEL")
 
-# 셀레니움 옵션 객체
-opts = Options()
-opts.add_argument("--headless")
-opts.add_argument("--disable-gpu")
-opts.add_argument("--no-sandbox")
-
 def get_driver():
     opts = Options()
-    opts.add_argument("--headless")
+    opts.add_argument("--headless=new")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--no-sandbox")
 
@@ -145,8 +139,6 @@ def setup_logging():
 
 # 로그 설정 함수 호출 싱글톤
 logger = setup_logging()
-
-driver = get_driver()
 
 # ### RDB 연결 정보
 # rdb_user = config.get(app_env, 'RDB_USER')

@@ -3,9 +3,10 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
-from helper.common import logger, DB_PARAMS
+from helper.common import logger, DB_PARAMS, fetch_stock_symbols
 from src.base_collector import BaseCollector
 import concurrent.futures
+from typing import List
 
 class SupportResistanceCollector(BaseCollector):
     def __init__(self):
@@ -23,12 +24,18 @@ class SupportResistanceCollector(BaseCollector):
         finally:
             cur.close()
             self._put_conn(conn)
+    
 
     def get_method_id(self, method_code: str) -> int:
         mid = self.method_id_map.get(method_code)
         if mid is None:
             raise ValueError(f"Method code '{method_code}' not found in support_resistance_methods.")
         return mid
+    
+    def fetch_stock_symbols(self, market: str = "US") -> List[str]:
+        if market.upper() != "US":
+            raise NotImplementedError("Only US supported")
+        return fetch_stock_symbols()
 
     # ────────────────────────────────────────────────────────────────────────────
     # 1) 데일리 피벗 포인트 계산 및 저장
@@ -36,6 +43,8 @@ class SupportResistanceCollector(BaseCollector):
         """
         전일 가격을 기준으로 오늘 데일리 피벗(R1, R2, S1, S2)을 계산하여 support_resistance(pivot_daily)에 Upsert
         """
+        stock_id = self.stock_id_map.get(symbol)
+        
         conn = self._get_conn()
         cur = conn.cursor()
         try:
@@ -43,14 +52,12 @@ class SupportResistanceCollector(BaseCollector):
             # ORDER BY date DESC LIMIT 1 로 조회
             today = datetime.now().date()
             cur.execute("""
-                SELECT p.high, p.low, p.close, p.open
+                SELECT high, low, close, open
                   FROM stock_prices p
-                  JOIN stocks s ON s.id = p.stock_id
-                 WHERE s.symbol = %s
-                   AND p.date < %s
+                 WHERE stock_id = %s AND date < %s
                  ORDER BY p.date DESC
                  LIMIT 1;
-            """, (symbol, today))
+            """, (stock_id, today))
             # 가장 최근의 데이터 조회
             row = cur.fetchone()
             if not row:
@@ -68,10 +75,10 @@ class SupportResistanceCollector(BaseCollector):
 
             method_id = self.get_method_id('pivot_daily')
             recs = [
-                (symbol, today, float(R1), False, None, method_id, datetime.now()),
-                (symbol, today, float(R2), False, None, method_id, datetime.now()),
-                (symbol, today, float(S1), True, None, method_id, datetime.now()),
-                (symbol, today, float(S2), True, None, method_id, datetime.now()),
+                (stock_id, today, float(R1), False, None, method_id, datetime.now()),
+                (stock_id, today, float(R2), False, None, method_id, datetime.now()),
+                (stock_id, today, float(S1), True, None, method_id, datetime.now()),
+                (stock_id, today, float(S2), True, None, method_id, datetime.now()),
             ]
 
             # 4) stock_id 조회, support_resistance Upsert
@@ -80,11 +87,7 @@ class SupportResistanceCollector(BaseCollector):
             sql = """
             INSERT INTO support_resistance (
                 stock_id, date, price_level, is_support, strength, method_id, last_updated
-            )
-            VALUES (
-                (SELECT id FROM stocks WHERE symbol = %s),
-                %s, %s, %s, %s, %s, %s
-            )
+            ) VALUES %s
             ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
                 strength     = EXCLUDED.strength,
                 last_updated = EXCLUDED.last_updated;
@@ -98,8 +101,7 @@ class SupportResistanceCollector(BaseCollector):
             # execute_values 용 placeholder: 
             # (SELECT id FROM stocks WHERE symbol = %s), %s, %s, %s, %s, %s, %s
             # symbol은 각 튜플마다 중복이지만 잘 작동합니다.
-            execute_values(cur, sql, recs,
-                           template=None, page_size=100)
+            execute_values(cur, sql, recs, page_size=500)
             conn.commit()
             return True
 
@@ -119,6 +121,8 @@ class SupportResistanceCollector(BaseCollector):
         전주(上週) 가격을 기준으로 금주 주간 피벗 포인트(P, R1, R2, S1, S2)를 계산하여
         support_resistance(pivot_weekly)에 Upsert.
         """
+        stock_id = self.stock_id_map.get(symbol)
+
         conn = self._get_conn()
         cur = conn.cursor()
         try:
@@ -129,15 +133,24 @@ class SupportResistanceCollector(BaseCollector):
             last_monday = this_monday - timedelta(days=7)
 
             cur.execute("""
-                SELECT MAX(p.high), MIN(p.low),
-                    FIRST_VALUE(p.open) OVER (ORDER BY p.date ASC) AS first_open,
-                    LAST_VALUE(p.close) OVER (ORDER BY p.date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_close
-                FROM stock_prices p
-                JOIN stocks s ON s.id = p.stock_id
-                WHERE s.symbol = %s
-                AND p.date >= %s
-                AND p.date < %s
-            """, (symbol, last_monday, this_monday))  # 전주 월요일 이상, 이번주 월요일 미만 (즉, 전주 한 주)
+                SELECT 
+                    MAX(high), 
+                    MIN(low),
+                    (SELECT open FROM stock_prices 
+                    WHERE stock_id = %s AND date >= %s AND date < %s 
+                    ORDER BY date ASC LIMIT 1),
+                    (SELECT close FROM stock_prices 
+                    WHERE stock_id = %s AND date >= %s AND date < %s 
+                    ORDER BY date DESC LIMIT 1)
+                FROM stock_prices
+                WHERE stock_id = %s
+                AND date >= %s
+                AND date < %s
+            """, (
+                stock_id, last_monday, this_monday,  # for open
+                stock_id, last_monday, this_monday,  # for close
+                stock_id, last_monday, this_monday   # for max/min
+            ))
 
             row = cur.fetchone()
             if not row or any(v is None for v in row):
@@ -155,25 +168,22 @@ class SupportResistanceCollector(BaseCollector):
             # 오늘(또는 이번주 월요일 날짜 기준)으로 저장
             method_id = self.get_method_id('pivot_weekly')
             recs = [
-                (symbol, this_monday, float(R1), False, None, method_id, datetime.now()),
-                (symbol, this_monday, float(R2), False, None, method_id, datetime.now()),
-                (symbol, this_monday, float(S1), True, None, method_id, datetime.now()),
-                (symbol, this_monday, float(S2), True, None, method_id, datetime.now()),
+                (stock_id, this_monday, float(R1), False, None, method_id, datetime.now()),
+                (stock_id, this_monday, float(R2), False, None, method_id, datetime.now()),
+                (stock_id, this_monday, float(S1), True, None, method_id, datetime.now()),
+                (stock_id, this_monday, float(S2), True, None, method_id, datetime.now()),
             ]
 
             sql = """
             INSERT INTO support_resistance (
                 stock_id, date, price_level, is_support, strength, method_id, last_updated
             )
-            VALUES (
-                (SELECT id FROM stocks WHERE symbol = %s),
-                %s, %s, %s, %s, %s, %s
-            )
+            VALUES %s
             ON CONFLICT (stock_id, date, price_level, is_support, method_id) DO UPDATE SET
                 strength     = support_resistance.strength,
                 last_updated = EXCLUDED.last_updated;
             """
-            execute_values(cur, sql, recs, template=None, page_size=100)
+            execute_values(cur, sql, recs, page_size=500)
             conn.commit()
             return True
 
@@ -193,29 +203,28 @@ class SupportResistanceCollector(BaseCollector):
         최근 lookback_days 일봉 데이터를 기준으로 데일리 매물대 상위 top_n개 가격 구간(bins)을 계산하여
         support_resistance(vp_daily)에 Upsert
         """
+        stock_id = self.stock_id_map.get(symbol)
+
         conn = self._get_conn()
         cur = conn.cursor()
         try:
             # 1) stock_id 및 lookback_days만큼의 일별 가격(high, low, volume) 불러오기
             cur.execute("""
-                SELECT s.id, p.date, p.high, p.low, p.close, p.volume
-                  FROM stock_prices p
-                  JOIN stocks s ON s.id = p.stock_id
-                 WHERE s.symbol = %s
-                 ORDER BY p.date DESC
+                SELECT date, high, low, close, volume
+                  FROM stock_prices
+                 WHERE stock_id = %s
+                 ORDER BY date DESC
                  LIMIT %s;
-            """, (symbol, lookback_days * 2))  # 여유 있게 두 배 가져온 뒤 최신 N개만 사용
+            """, (stock_id, lookback_days * 2))  # 여유 있게 두 배 가져온 뒤 최신 N개만 사용
             rows = cur.fetchall()
             if not rows:
                 logger.warning(f"[{symbol}] 데일리 VP용 가격 데이터 없음")
                 return False
 
             # DataFrame으로 정리 후, 정확히 lookback_days개만 남기기
-            df_raw = pd.DataFrame(rows, columns=["stock_id", "date", "high", "low", "close", "volume"])
+            df_raw = pd.DataFrame(rows, columns=["date", "high", "low", "close", "volume"])
             df_raw["date"] = pd.to_datetime(df_raw["date"])
             df_raw = df_raw.sort_values("date", ascending=False).head(lookback_days).reset_index(drop=True)
-
-            stock_id = int(df_raw.loc[0, "stock_id"])
 
             # 2) bin edges 계산 (평균 종가 × 0.5% or 고정 단위 등)
             min_price = df_raw["low"].min()
@@ -260,10 +269,9 @@ class SupportResistanceCollector(BaseCollector):
             total_volume = all_bins["volume_sum"].sum()
 
             method_id = self.get_method_id("vp_daily")
-            all_bins["method_id"]  = method_id
+            all_bins["method_id"] = method_id
             all_bins["is_support"] = all_bins["price_bin"] < avg_close
             all_bins["strength"]   = all_bins["volume_sum"] / total_volume
-            all_bins["method_id"]  = self.get_method_id("vp_daily")
             all_bins["date"]       = datetime.now().date()
             all_bins["stock_id"]   = stock_id
             all_bins["last_updated"] = datetime.now()
@@ -275,7 +283,18 @@ class SupportResistanceCollector(BaseCollector):
             ]].rename(columns={"price_bin": "price_level"})
 
 
-            records = to_upsert.to_records(index=False)
+            recs_res = [
+                (
+                    int(row.stock_id),
+                    str(row.date),
+                    float(row.price_level),
+                    bool(row.is_support),
+                    float(row.strength),
+                    int(row.method_id),
+                    str(row.last_updated)
+                )
+                for row in to_upsert.itertuples(index=False)
+            ]
             sql = """
             INSERT INTO support_resistance (
                 stock_id, date, price_level, is_support, strength, method_id, last_updated
@@ -284,7 +303,7 @@ class SupportResistanceCollector(BaseCollector):
                 strength     = EXCLUDED.strength,
                 last_updated = EXCLUDED.last_updated;
             """
-            execute_values(cur, sql, records)
+            execute_values(cur, sql, recs_res)
             conn.commit()
             return True
 
@@ -304,6 +323,8 @@ class SupportResistanceCollector(BaseCollector):
         1) volume_profile_archives (모든 bin) 저장
         2) support_resistance(vp_longterm) 상위 top_n개 저장
         """
+        stock_id = self.stock_id_map.get(symbol)
+
         conn = self._get_conn()
         cur = conn.cursor()
         try:
@@ -312,27 +333,27 @@ class SupportResistanceCollector(BaseCollector):
             past_date = today - timedelta(days=int(timeframe_years * 365))
 
             cur.execute("""
-                SELECT s.id, p.date, p.high, p.low, p.close, p.volume
-                  FROM stock_prices p
-                  JOIN stocks s ON s.id = p.stock_id
-                 WHERE s.symbol = %s
-                   AND p.date BETWEEN %s AND %s
-                 ORDER BY p.date ASC;
-            """, (symbol, past_date, today))
+                SELECT date, high, low, close, volume
+                  FROM stock_prices
+                 WHERE stock_id = %s
+                   AND date BETWEEN %s AND %s
+                 ORDER BY date ASC;
+            """, (stock_id, past_date, today))
             rows = cur.fetchall()
             if not rows:
                 logger.warning(f"[{symbol}] vp_longterm용 가격 데이터 없음")
                 return False
 
-            df_hist = pd.DataFrame(rows, columns=["stock_id", "date", "high", "low", "close", "volume"])
+            df_hist = pd.DataFrame(rows, columns=["date", "high", "low", "close", "volume"])
             df_hist["date"] = pd.to_datetime(df_hist["date"])
-            stock_id = int(df_hist.loc[0, "stock_id"])
 
             # 2) bin edges 계산 (평균 종가 × 0.5% 등)
             min_price = df_hist["low"].min()
             max_price = df_hist["high"].max()
             avg_close = df_hist["close"].mean()
             bin_size = (max_price - min_price) / 10
+            if bin_size == 0:
+                bin_size = max(avg_close * 0.005, 0.1)
 
             low_edge = np.floor(min_price / bin_size) * bin_size
             high_edge = np.ceil(max_price / bin_size) * bin_size
@@ -375,7 +396,18 @@ class SupportResistanceCollector(BaseCollector):
                 "stock_id", "date", "price_level", "is_support", "strength", "method_id", "last_updated"
             ]]
 
-            recs_res = to_upsert.to_records(index=False)
+            recs_res = [
+                (
+                    int(row.stock_id),
+                    str(row.date),
+                    float(row.price_level),
+                    bool(row.is_support),
+                    float(row.strength),
+                    int(row.method_id),
+                    str(row.last_updated)
+                )
+                for row in to_upsert.itertuples(index=False)
+            ]
             sql_res = """
             INSERT INTO support_resistance (
                 stock_id, date, price_level, is_support, strength, method_id, last_updated
@@ -425,7 +457,10 @@ class SupportResistanceCollector(BaseCollector):
 
     # ────────────────────────────────────────────────────────────────────────────
     # 4) 여러 심볼을 병렬로 처리하는 메서드
-    def update_all(self, symbols: list[str], max_workers: int = 8):
+    def update_all(self, symbols: list[str], market="US", max_workers: int = 8):
+        symbols = self.fetch_stock_symbols(market)
+        self.stock_id_map = self._get_stock_id_map(symbols)
+
         results = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_symbol = {
@@ -451,15 +486,8 @@ class SupportResistanceCollector(BaseCollector):
 
 # 사용 예시:
 if __name__ == "__main__":
-    conn = psycopg2.connect(**DB_PARAMS)
-    cur = conn.cursor()
-    cur.execute("SELECT symbol FROM stocks;")
-    symbols = [r[0] for r in cur.fetchall()]
-    cur.close()
-    conn.close()
-
     sr_collector = SupportResistanceCollector()
-    results = sr_collector.update_all(symbols, max_workers=8)
+    results = sr_collector.update_all("US", max_workers=8)
     for sym, outcome in results.items():
         logger.info(
             f"{sym} → pivot_daily: {outcome['pivot_daily']}, "
